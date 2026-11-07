@@ -1,5 +1,5 @@
 // 更新を配るときは CACHE_VERSION を上げる
-const CACHE_VERSION = 'mj-v5';
+const CACHE_VERSION = 'mj-v6';
 const FILES = ['./', './index.html', './logic.js', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {

@@ -189,6 +189,15 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .set-item input, .set-select { width: 100%; padding: 10px; font-size: 16px; text-align: right; }
 .set-select { text-align: left; margin-bottom: 12px; }
 .oka-note { font-size: 12px; color: var(--gold); margin-top: 4px; }
+.carry-rows { display: grid; gap: 6px; margin-bottom: 8px; }
+.carry-row { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: baseline; width: 100%; text-align: left; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: #0b0e12; }
+.carry-row .c-name { font: 600 15px var(--serif); letter-spacing: .05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.carry-row .c-games { font-size: 11px; color: var(--sub); }
+.carry-row b { font: 700 16px var(--sans); font-variant-numeric: tabular-nums; min-width: 64px; text-align: right; }
+.carry-sum { font-size: 12px; text-align: right; margin: 0 2px 12px; }
+.carry-sum.ok { color: var(--gold-hi); } .carry-sum.warn { color: #f0b36a; }
+.carry-text { width: 100%; padding: 10px 12px; font: 500 16px/1.6 var(--sans); color: var(--ivory); background: #0a0c10; border: 1px solid var(--line); border-radius: 8px; resize: vertical; }
+.carry-text:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 2px rgba(214,178,98,.22); }
 .mem-input { width: 100%; padding: 11px 12px; font-size: 16px; margin-bottom: 8px; border-left: 4px solid var(--pc); }
 
 /* ----- ナビ・シート・トースト ----- */
@@ -279,6 +288,7 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 <section id="screen-stats" class="screen">
   <h2 class="page-title">成績</h2>
   <label class="toggle"><input type="checkbox" id="stats-cur" checked onchange="renderStats()"> いま対局中の試合も含める</label>
+  <label class="toggle"><input type="checkbox" id="stats-carry" checked onchange="renderStats()"> 繰越ポイント（過去の累計）も含める</label>
   <div id="stats-list"></div>
   <p class="hint">名前が同じ人は、すべての対局をまとめて累計します（全角・半角、大文字・小文字、空白の違いは同じ名前として扱います）。</p>
 </section>
@@ -309,6 +319,16 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
     </div>
     <div class="oka-note" id="oka-note"></div>
     <p class="hint">変えたルールは、これから記録する試合に使われます。記録済みの試合はそのままです。</p>
+  </div>
+
+  <div class="panel">
+    <div class="section-label"><span>過去の累計（繰越）</span></div>
+    <div id="carry-list"></div>
+    <div class="btn-row">
+      <button class="btn" onclick="openCarryPaste()">メモから取り込む</button>
+      <button class="btn" onclick="openCarryEdit(null)">1人ずつ追加</button>
+    </div>
+    <p class="hint">このアプリを使う前の累計ptを、名前ごとに入れておけます。成績画面の通算ptに足されます（平均順位などは、このアプリで記録した試合だけで計算します）。同じ名前を入れ直すと上書きされます。</p>
   </div>
 
   <div class="panel">
@@ -351,7 +371,7 @@ const PC = ['var(--p1)', 'var(--p2)', 'var(--p3)', 'var(--p4)'];
 const ROW_H = 58, ROW_GAP = 6;
 const KEY_MAIN = 'mahjong_v3', KEY_INPUT = 'mahjong_v3_input';
 
-let state = { current: newSession(), archives: [], rule: cloneRule(MJ_PRESETS[0]) };
+let state = { current: newSession(), archives: [], rule: cloneRule(MJ_PRESETS[0]), carry: [] };
 let input = { vals: ['', '', '', ''], active: 0, editingId: null };
 let ui = { screen: 'play', detailId: null };
 let saveWarned = false;
@@ -384,7 +404,7 @@ function readJSON(key) { try { return JSON.parse(localStorage.getItem(key)); } c
 
 function save() {
   try {
-    localStorage.setItem(KEY_MAIN, JSON.stringify({ v: 3, current: state.current, archives: state.archives, rule: state.rule }));
+    localStorage.setItem(KEY_MAIN, JSON.stringify({ v: 3, current: state.current, archives: state.archives, rule: state.rule, carry: state.carry }));
     localStorage.setItem(KEY_INPUT, JSON.stringify(input));
   } catch (e) {
     console.log('Save failed:', e);
@@ -419,6 +439,7 @@ function load() {
       state.current = sanitizeSession(raw.current) || newSession();
       state.archives = (Array.isArray(raw.archives) ? raw.archives : []).map(sanitizeSession).filter(Boolean);
       state.rule = sanitizeRule(raw.rule) || cloneRule(MJ_PRESETS[0]);
+      state.carry = sanitizeCarry(raw.carry);
     } else if (localStorage.getItem('mahjong_pNames') !== null || localStorage.getItem('mahjong_archives') !== null || localStorage.getItem('mahjong_app2_scores') !== null) {
       const m = migrateLegacy();
       state.current = m.current; state.archives = m.archives; state.rule = m.rule;
@@ -455,6 +476,7 @@ function renderAll() { renderPlay(false); refreshKnownNames(); }
 function refreshKnownNames() {
   const set = new Set();
   state.archives.concat([state.current]).forEach(s => s.names.forEach((n, i) => { if (n.trim() !== '') set.add(n.trim()); }));
+  state.carry.forEach(c => set.add(c.name));
   $('known-names').innerHTML = Array.from(set).map(n => `<option value="${esc(n)}">`).join('');
 }
 
@@ -820,22 +842,27 @@ function resumeSession(id) {
 ========================================= */
 function renderStats() {
   const sessions = state.archives.concat($('stats-cur').checked ? [state.current] : []);
-  const stats = calcStats(sessions);
+  const stats = calcStats(sessions, $('stats-carry').checked ? state.carry : []);
   if (!stats.length) { $('stats-list').innerHTML = '<div class="panel"><div class="empty">試合を記録すると、ここに名前ごとの累計が出ます</div></div>'; return; }
   const DIST = ['#f3dca0', '#b89a4e', '#5b6270', '#a84a44'];
-  $('stats-list').innerHTML = stats.map((s, idx) => `
+  $('stats-list').innerHTML = stats.map((s, idx) => {
+    const has = s.games > 0;
+    const carryLine = (s.carryPt !== 0 || s.carryGames > 0) ? `繰越 ${fmtPt1(s.carryPt)}${s.carryGames ? `（${s.carryGames}試合）` : ''} を含む` : '';
+    const detail = has ? `最高 ${fmtPt1(s.best)} ／ 最低 ${fmtPt1(s.worst)} ／ ${s.sessionCount} 回の対局` : 'このアプリで記録した試合はまだありません';
+    return `
 <div class="st-card">
   <div class="st-head"><div class="st-no">${idx + 1}</div><div class="st-name">${esc(s.name)}</div><div class="st-total ${cls(s.total)}">${fmtPt1(s.total)}</div></div>
   <div class="st-meta">
     <div>${s.games}<small>試合</small></div>
-    <div>${s.avgRank.toFixed(2)}<small>平均順位</small></div>
-    <div>${Math.round(s.topRate * 100)}%<small>トップ率</small></div>
-    <div>${Math.round(s.lastRate * 100)}%<small>ラス率</small></div>
+    <div>${has ? s.avgRank.toFixed(2) : '-'}<small>平均順位</small></div>
+    <div>${has ? Math.round(s.topRate * 100) + '%' : '-'}<small>トップ率</small></div>
+    <div>${has ? Math.round(s.lastRate * 100) + '%' : '-'}<small>ラス率</small></div>
   </div>
-  <div class="dist">${s.rankCounts.map((c, k) => `<i style="width:${(c / s.games * 100).toFixed(1)}%;background:${DIST[k]}"></i>`).join('')}</div>
-  <div class="dist-legend">${s.rankCounts.map((c, k) => `<div>${k + 1}位 <b>${c}</b></div>`).join('')}</div>
-  <div class="hint" style="margin-top:8px">最高 ${fmtPt1(s.best)} ／ 最低 ${fmtPt1(s.worst)} ／ ${s.sessionCount} 回の対局</div>
-</div>`).join('');
+  ${has ? `<div class="dist">${s.rankCounts.map((c, k) => `<i style="width:${(c / s.games * 100).toFixed(1)}%;background:${DIST[k]}"></i>`).join('')}</div>
+  <div class="dist-legend">${s.rankCounts.map((c, k) => `<div>${k + 1}位 <b>${c}</b></div>`).join('')}</div>` : ''}
+  <div class="hint" style="margin-top:8px">${detail}${carryLine ? `<br>${esc(carryLine)}` : ''}</div>
+</div>`;
+  }).join('');
 }
 
 /* =========================================
@@ -859,7 +886,90 @@ function renderSettings() {
   $('rule-start').value = state.rule.start; $('rule-return').value = state.rule.ret;
   state.rule.uma.forEach((u, i) => { $(`rule-uma-${i + 1}`).value = u; });
   updateRuleLabels();
+  renderCarry();
   $('set-members').innerHTML = [0, 1, 2, 3].map(i => `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--line);border-left:4px solid ${PC[i]};border-radius:8px;background:#0b0e12;font-family:var(--serif)"><span style="color:var(--sub);font:600 11px var(--sans);width:22px">P${i + 1}</span>${esc(nm(i))}</div>`).join('');
+}
+
+/* ---- 繰越ポイント（過去の累計） ---- */
+let carryText = '';
+
+function renderCarry() {
+  const list = state.carry;
+  if (!list.length) { $('carry-list').innerHTML = '<div class="empty" style="padding:10px 6px 14px">まだ登録がありません</div>'; return; }
+  const total = round1(list.reduce((a, c) => a + c.pt, 0));
+  const ok = toTenths(total) === 0;
+  $('carry-list').innerHTML = `<div class="carry-rows">${list.map(c =>
+    `<button class="carry-row" onclick="openCarryEdit('${c.id}')"><span class="c-name">${esc(c.name)}</span><span class="c-games">${c.games ? c.games + '試合' : ''}</span><b class="${cls(c.pt)}">${fmtPt1(c.pt)}</b></button>`).join('')}</div>
+<div class="carry-sum ${ok ? 'ok' : 'warn'}">合計 ${fmtPt1(total)} ${ok ? '✓' : '（0になっていません）'}</div>`;
+}
+
+function openCarryPaste() {
+  openSheet(`<h3>メモから取り込む</h3>
+<p class="hint" style="margin:0 0 8px">1行に「名前 ポイント」の形で貼り付けてください。<br>例: タロウ +120 ／ ジロウ：-45pt ／ サブロー 30.5</p>
+<textarea id="carry-text" class="carry-text" rows="8" placeholder="タロウ +120.5&#10;ジロウ -45&#10;サブロー -75.5"></textarea>
+<div class="sheet-actions"><button class="btn gold" onclick="previewCarry()">内容を確認する</button><button class="link" onclick="closeSheet()">閉じる</button></div>`);
+  $('carry-text').value = carryText;
+}
+
+function previewCarry() {
+  const el = $('carry-text'); if (el) carryText = el.value;
+  const r = parseCarryText(carryText);
+  if (!r.entries.length) { toast('読み取れる行がありませんでした'); return; }
+  const total = round1(r.entries.reduce((a, e) => a + e.pt, 0));
+  const exist = new Set(state.carry.map(c => nameKey(c.name)));
+  const rows = r.entries.map(e => `<tr><td style="text-align:left;font-family:var(--serif)">${esc(e.name)}${exist.has(nameKey(e.name)) ? '<span style="margin-left:6px;font-size:10px;color:var(--gold)">上書き</span>' : ''}</td><td><b class="${cls(e.pt)}">${fmtPt1(e.pt)}</b></td></tr>`).join('');
+  const errs = r.errors.length ? `<p class="hint" style="color:#f0b36a">読み取れなかった行（取り込まれません）:<br>${r.errors.map(x => `${x.line}行目: ${esc(x.text)}`).join('<br>')}</p>` : '';
+  const skip = r.skipped.length ? `<p class="hint">合計の行は無視しました: ${r.skipped.map(esc).join(' / ')}</p>` : '';
+  const sumMsg = toTenths(total) === 0 ? '<p class="draft-msg ok" style="margin-top:10px">合計は 0 です ✓</p>' : `<p class="draft-msg warn" style="margin-top:10px">合計が ${fmtPt1(total)} です（0 になっていません）。メモの内容を確認してね</p>`;
+  openSheet(`<h3>取り込む内容の確認</h3>
+<div class="tbl-wrap"><table class="tbl"><thead><tr><th style="text-align:left">名前</th><th>累計pt</th></tr></thead><tbody>${rows}</tbody></table></div>
+${sumMsg}${errs}${skip}
+<div class="sheet-actions"><button class="btn gold" onclick="applyCarryText()">この内容で取り込む</button><button class="btn" onclick="openCarryPaste()">メモを直す</button></div>`);
+}
+
+function applyCarryText() {
+  const r = parseCarryText(carryText);
+  r.entries.forEach(e => {
+    const old = state.carry.find(c => nameKey(c.name) === nameKey(e.name));
+    state.carry = upsertCarry(state.carry, e.name, e.pt, old ? old.games : 0);
+  });
+  carryText = '';
+  save(); refreshKnownNames(); renderSettings(); closeSheet();
+  toast(`${r.entries.length} 人ぶんを取り込みました`);
+}
+
+function openCarryEdit(id) {
+  const c = id ? state.carry.find(x => x.id === id) : null;
+  openSheet(`<h3>${c ? '繰越ポイントを編集' : '繰越ポイントを追加'}</h3>
+<div class="set-item" style="margin-bottom:10px"><label for="carry-name">名前</label><input id="carry-name" type="text" maxlength="20" list="known-names" style="text-align:left" value="${esc(c ? c.name : '')}"></div>
+<div class="set-row">
+<div class="set-item"><label for="carry-pt">累計pt</label><input id="carry-pt" type="number" step="0.1" value="${c ? c.pt : ''}"></div>
+<div class="set-item"><label for="carry-games">試合数（任意）</label><input id="carry-games" type="number" min="0" step="1" inputmode="numeric" value="${c && c.games ? c.games : ''}"></div>
+</div>
+<div class="sheet-actions">
+<button class="btn gold" onclick="saveCarryEdit(${c ? `'${c.id}'` : 'null'})">保存</button>
+${c ? `<button class="btn danger" onclick="deleteCarry('${c.id}')">削除</button>` : ''}
+<button class="link" onclick="closeSheet()">閉じる</button>
+</div>`);
+}
+
+function saveCarryEdit(id) {
+  const name = $('carry-name').value.trim();
+  const pt = parseFloat($('carry-pt').value);
+  const gv = parseInt($('carry-games').value, 10);
+  if (name === '') { toast('名前を入れてね'); return; }
+  if (!Number.isFinite(pt)) { toast('累計ptを入れてね'); return; }
+  const base = id ? state.carry.filter(c => c.id !== id) : state.carry;
+  state.carry = upsertCarry(base, name, round1(pt), Number.isFinite(gv) && gv > 0 ? gv : 0);
+  save(); refreshKnownNames(); renderSettings(); closeSheet();
+  toast('保存しました');
+}
+
+function deleteCarry(id) {
+  const c = state.carry.find(x => x.id === id); if (!c) return;
+  if (!confirm(`「${c.name}」の繰越ポイントを削除します。よろしいですか？`)) return;
+  state.carry = state.carry.filter(x => x.id !== id);
+  save(); renderSettings(); closeSheet();
 }
 
 function updateRuleLabels() {
@@ -889,8 +999,8 @@ function onRuleInput() {
 function exportData() {
   const all = state.archives.slice();
   if (state.current.games.length) all.push(Object.assign({}, state.current, { title: state.current.title || '対局中データ' }));
-  if (!all.length) { toast('書き出すデータがありません'); return; }
-  const blob = new Blob([JSON.stringify({ app: 'mahjong-settle', version: 3, exportedAt: Date.now(), archives: all }, null, 2)], { type: 'application/json' });
+  if (!all.length && !state.carry.length) { toast('書き出すデータがありません'); return; }
+  const blob = new Blob([JSON.stringify({ app: 'mahjong-settle', version: 3, exportedAt: Date.now(), archives: all, carry: state.carry }, null, 2)], { type: 'application/json' });
   const d = new Date(), a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `mahjong_backup_${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}.json`;
@@ -911,13 +1021,18 @@ function importData(ev) {
       if (incoming.some(s => s === null)) throw new Error('ファイルの中身が正しくありません');
       const known = new Set(state.archives.concat([state.current]).map(sessionKey));
       const fresh = incoming.filter(s => { const k = sessionKey(s); if (known.has(k)) return false; known.add(k); return s.games.length > 0; });
-      if (!fresh.length) { toast('新しい対局はありませんでした（すべて登録済み）'); return; }
-      if (!confirm(`対局 ${fresh.length} 件を追加します。よろしいですか？\n（登録済みの ${incoming.length - fresh.length} 件は除きます）`)) return;
+      // 繰越ポイントは、まだ登録のない名前だけ追加する（すでにある名前は上書きしない）
+      const knownCarry = new Set(state.carry.map(c => nameKey(c.name)));
+      const newCarry = sanitizeCarry(data.version >= 3 ? data.carry : []).filter(c => !knownCarry.has(nameKey(c.name)));
+      if (!fresh.length && !newCarry.length) { toast('新しいデータはありませんでした（すべて登録済み）'); return; }
+      const what = `対局 ${fresh.length} 件${newCarry.length ? `と、繰越ポイント ${newCarry.length} 人ぶん` : ''}`;
+      if (!confirm(`${what}を追加します。よろしいですか？\n（登録済みの対局 ${incoming.length - fresh.length} 件は除きます）`)) return;
       fresh.forEach(s => { if (!s.endedAt && !s.dateText) s.endedAt = Date.now(); state.archives.push(s); });
       state.archives.sort((a, b) => (b.endedAt || 0) - (a.endedAt || 0));
+      state.carry = sanitizeCarry(state.carry.concat(newCarry));
       save(); refreshKnownNames();
       if (ui.screen === 'history') renderHistory();
-      toast(`${fresh.length} 件を読み込みました`);
+      toast(`${what}を読み込みました`);
     } catch (e) { alert('読み込めませんでした: ' + e.message); }
   };
   reader.readAsText(file);

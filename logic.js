@@ -271,15 +271,66 @@ function sessionSummary(s) {
   });
 }
 
-// 名前ごと（表記ゆれは同じ人として）に、全対局をまたいで集計
-function calcStats(sessions) {
+/* ---------- 繰越ポイント（過去の累計） ----------
+   carry = [{ id, name, pt, games }]  名前ごとに1件（表記ゆれは同じ人） */
+function sanitizeCarry(arr) {
+  if (!Array.isArray(arr)) return [];
   const map = new Map();
+  arr.forEach(c => {
+    if (!c || typeof c !== 'object') return;
+    const name = String(c.name == null ? '' : c.name).trim().slice(0, 20);
+    if (name === '' || !isNum(c.pt)) return;
+    const games = (Number.isInteger(c.games) && c.games >= 0 && c.games <= 100000) ? c.games : 0;
+    map.set(nameKey(name), { id: safeId(c.id), name, pt: round1(c.pt), games });
+  });
+  return Array.from(map.values());
+}
+
+// 同じ名前があれば上書き、なければ追加（新しい配列を返す）
+function upsertCarry(list, name, pt, games) {
+  const key = nameKey(name);
+  const rest = list.filter(c => nameKey(c.name) !== key);
+  const old = list.find(c => nameKey(c.name) === key);
+  return sanitizeCarry(rest.concat([{ id: old ? old.id : newId(), name, pt, games }]));
+}
+
+// メモ貼り付け用: 「名前 +120」「名前：-45pt」のような行を読み取る
+function parseCarryText(text) {
+  const entries = [], errors = [], skipped = [];
+  const seen = new Map();
+  String(text == null ? '' : text).split(/\r?\n/).forEach((raw, idx) => {
+    const line = raw.normalize('NFKC').replace(/[−–—]/g, '-').trim();
+    if (line === '') return;
+    const m = line.match(/^(.*?)[\s:：,、=]*([+-]?\d[\d,]*(?:\.\d+)?)\s*(?:pt|ポイント|P|点)?\s*$/i);
+    const name = m ? m[1].replace(/^[・•●■□◆▶▷]+/, '').trim() : '';
+    if (!m || name === '') { errors.push({ line: idx + 1, text: raw.trim() }); return; }
+    if (/^(合計|総計|計|total|sum)$/i.test(name)) { skipped.push(raw.trim()); return; }
+    const pt = round1(parseFloat(m[2].replace(/,/g, '')));
+    if (!Number.isFinite(pt)) { errors.push({ line: idx + 1, text: raw.trim() }); return; }
+    const key = nameKey(name);
+    if (seen.has(key)) entries[seen.get(key)] = { name, pt };   // 同じ名前が複数あれば、あとの行を採用
+    else { seen.set(key, entries.length); entries.push({ name, pt }); }
+  });
+  return { entries, errors, skipped };
+}
+
+// 名前ごと（表記ゆれは同じ人として）に、全対局をまたいで集計
+// carry を渡すと、繰越ポイントを通算ptに足す（順位などの集計には含めない）
+function calcStats(sessions, carry) {
+  const map = new Map();
+  const ensure = (key, name) => {
+    if (!map.has(key)) map.set(key, { key, name, games: 0, total: 0, rankSum: 0, rankCounts: [0, 0, 0, 0], best: -Infinity, worst: Infinity, sessions: new Set(), carryPt: 0, carryGames: 0 });
+    return map.get(key);
+  };
+  (carry || []).forEach(c => {
+    const st = ensure(nameKey(c.name), c.name);
+    st.carryPt = c.pt; st.carryGames = c.games; st.total = round1(st.total + c.pt);
+  });
   sessions.forEach(s => {
     s.games.forEach(g => {
       for (let i = 0; i < 4; i++) {
         const key = nameKey(displayName(s.names[i], i));
-        if (!map.has(key)) map.set(key, { key, name: displayName(s.names[i], i), games: 0, total: 0, rankSum: 0, rankCounts: [0, 0, 0, 0], best: -Infinity, worst: Infinity, sessions: new Set() });
-        const st = map.get(key);
+        const st = ensure(key, displayName(s.names[i], i));
         st.games++; st.total = round1(st.total + g.pts[i]);
         st.rankSum += g.ranks[i]; st.rankCounts[g.ranks[i] - 1]++;
         st.best = Math.max(st.best, g.pts[i]); st.worst = Math.min(st.worst, g.pts[i]);
@@ -293,7 +344,8 @@ function calcStats(sessions) {
       avgRank: st.games ? st.rankSum / st.games : 0,
       topRate: st.games ? st.rankCounts[0] / st.games : 0,
       lastRate: st.games ? st.rankCounts[3] / st.games : 0,
-      best: st.best, worst: st.worst, sessionCount: st.sessions.size
+      best: st.games ? st.best : null, worst: st.games ? st.worst : null, sessionCount: st.sessions.size,
+      carryPt: st.carryPt, carryGames: st.carryGames
     }))
     .sort((a, b) => b.total - a.total || b.games - a.games);
 }

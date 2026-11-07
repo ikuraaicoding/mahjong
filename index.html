@@ -1,0 +1,943 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>麻雀精算</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="麻雀精算">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+/* ==================================
+共通・全体スタイル (Dark Theme)
+================================== */
+:root {
+--bg-base: #0f172a;
+--bg-card: #1e293b;
+--bg-input: #0f172a;
+--text-main: #f8fafc;
+--text-sub: #94a3b8;
+--border-color: #334155;
+--accent-color: #38bdf8;
+--header-green: linear-gradient(90deg, #004d25 0%, #002914 100%);
+
+/* プレイヤーカラー */
+--p1-color: #dc2626; /* 赤 */
+--p2-color: #2563eb; /* 青 */
+--p3-color: #ea580c; /* オレンジ */
+--p4-color: #db2777; /* ピンク */
+}
+
+* { box-sizing: border-box; touch-action: manipulation; margin: 0; padding: 0; }
+body {
+font-family: 'Helvetica Neue', Arial, sans-serif;
+background-color: var(--bg-base);
+color: var(--text-main);
+}
+.app-container {
+padding-bottom: 80px;
+min-height: 100vh;
+background: radial-gradient(circle at top, #1e293b 0%, #0f172a 100%);
+}
+.screen {
+display: none;
+padding: 20px 10px;
+animation: fadeIn 0.3s ease;
+}
+.screen.active {
+display: block;
+}
+@keyframes fadeIn {
+from { opacity: 0; transform: translateY(5px); }
+to { opacity: 1; transform: translateY(0); }
+}
+.card-container {
+background: rgba(30, 41, 59, 0.85);
+backdrop-filter: blur(8px);
+padding: 20px 15px;
+border-radius: 12px;
+border: 1px solid var(--border-color);
+box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+width: 100%;
+max-width: 400px;
+margin: 0 auto;
+}
+h2 {
+text-align: center;
+color: var(--text-main);
+margin-top: 0;
+margin-bottom: 15px;
+font-size: 20px;
+letter-spacing: 1px;
+}
+input {
+background-color: var(--bg-input);
+color: var(--text-main);
+border: 1px solid var(--border-color);
+}
+input:focus {
+outline: none;
+border-color: var(--accent-color);
+box-shadow: 0 0 0 2px rgba(56,189,248,0.2);
+}
+
+/* ホーム画面スタイル */
+.home-header { text-align: center; margin-bottom: 20px; padding-top: 10px; }
+.menu-grid { display: grid; grid-template-columns: 1fr; gap: 15px; max-width: 380px; margin: 0 auto; padding: 0 10px; }
+.menu-btn {
+background: var(--bg-card); border: 1px solid var(--border-color); padding: 18px; border-radius: 12px;
+font-size: 16px; font-weight: bold; color: var(--accent-color); text-align: center;
+box-shadow: 0 4px 6px rgba(0,0,0,0.3); cursor: pointer; transition: all 0.2s;
+}
+.menu-btn:active { background: #334155; transform: scale(0.98); }
+
+/* プレイヤー名設定エリア */
+.player-setup-card {
+max-width: 380px; margin: 20px auto 0; background: var(--bg-card); padding: 15px;
+border-radius: 12px; border: 1px solid var(--border-color); box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.player-setup-title { font-size: 14px; font-weight: bold; color: var(--text-main); margin-bottom: 10px; text-align: center; }
+.player-setup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.player-setup-item { display: flex; align-items: center; }
+.player-setup-item span { font-size: 12px; font-weight: bold; width: 28px; }
+
+.p1-text { color: var(--p1-color); }
+.p2-text { color: var(--p2-color); }
+.p3-text { color: var(--p3-color); }
+.p4-text { color: var(--p4-color); }
+
+.player-setup-item input {
+width: calc(100% - 28px); padding: 6px 8px; border-radius: 6px; font-size: 14px;
+}
+
+/* 下部ナビゲーション */
+.bottom-banner {
+position: fixed; bottom: 0; left: 0; right: 0; background: var(--bg-card);
+display: flex; box-shadow: 0 -4px 12px rgba(0,0,0,0.5); z-index: 1000;
+border-top: 1px solid var(--border-color);
+}
+.nav-item {
+flex: 1; text-align: center; padding: 8px 0; color: var(--text-sub);
+font-size: 10px; font-weight: bold; cursor: pointer; border-top: 3px solid transparent;
+}
+.nav-item .icon { font-size: 18px; display: block; margin-bottom: 2px; }
+.nav-item.active { color: var(--accent-color); border-top: 3px solid var(--accent-color); background: rgba(56,189,248,0.1); }
+
+/* アプリ共通スタイル */
+.input-label { display: inline-block; width: 110px; font-weight: bold; font-size: 14px; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.rate-input-area { display: flex; align-items: center; font-size: 15px; font-weight: bold; color: var(--text-main); }
+.rate-input-area input { width: 80px; margin: 0 10px; text-align: right; font-size: 16px; padding: 8px; border-radius: 4px; }
+.player-input { display: flex; align-items: center; margin-bottom: 12px; }
+.player-input input {
+flex: 1; padding: 10px; border-radius: 6px; font-size: 18px; text-align: right; transition: all 0.2s;
+}
+.player-input input.auto-filled { background-color: #1e293b; color: #64748b; }
+.unit { margin-left: 5px; font-size: 14px; color: var(--text-sub); }
+
+.calc-btn {
+width: 100%; padding: 14px; background: linear-gradient(135deg, #0ea5e9, #2563eb); color: white; border: none;
+border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; transition: opacity 0.3s;
+margin-top: 10px; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
+}
+.calc-btn:active { opacity: 0.8; }
+
+.result-area {
+margin-top: 20px; padding: 15px; background-color: #0f172a; border-radius: 6px; border: 1px solid var(--border-color);
+}
+.result-item { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 15px; border-bottom: 1px dashed var(--border-color); padding-bottom: 5px; }
+.result-item:last-child { border-bottom: none; }
+.point-detail { font-size: 12px; color: var(--text-sub); margin-right: 10px; }
+.error-msg { color: #ef4444; font-weight: bold; text-align: center; font-size: 14px; }
+
+.rule-settings { background: #0f172a; border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; margin-top: 15px; margin-bottom: 15px; }
+.rule-title { font-size: 14px; font-weight: bold; color: var(--text-sub); margin-bottom: 8px; }
+.rule-row { display: flex; gap: 10px; margin-bottom: 8px; }
+.rule-item { flex: 1; }
+.rule-label { font-size: 12px; color: var(--text-sub); margin-bottom: 2px; }
+.rule-item input { width: 100%; padding: 8px; border-radius: 4px; text-align: right; font-size: 15px; }
+
+/* アプリ2 専用スタイル (放送風UI) */
+.app2-setting-bar { display: flex; justify-content: space-between; align-items: center; background: #0f172a; padding: 8px 12px; border-radius: 6px; margin-bottom: 15px; font-size: 14px; font-weight: bold; border: 1px solid var(--border-color); }
+.app2-setting-bar input { width: 60px; padding: 6px; text-align: right; font-size: 15px; border-radius: 4px; }
+
+.app2-tabs { display: flex; gap: 4px; margin-bottom: 20px; }
+.app2-tab {
+flex: 1; text-align: center; padding: 8px 2px; background: #0f172a; color: var(--text-main);
+border-radius: 6px; font-size: 12px; font-weight: bold;
+border: 1px solid var(--border-color); border-bottom-width: 4px;
+overflow: hidden; transition: all 0.2s; cursor: pointer;
+}
+#app2-tab-0 { border-bottom-color: var(--p1-color); } #app2-tab-1 { border-bottom-color: var(--p2-color); } #app2-tab-2 { border-bottom-color: var(--p3-color); } #app2-tab-3 { border-bottom-color: var(--p4-color); }
+.app2-tab.active { background: rgba(56, 189, 248, 0.15); border-color: var(--accent-color); box-shadow: 0 0 10px rgba(56,189,248,0.2); }
+.app2-tab-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; color: var(--text-sub); pointer-events: none; }
+.app2-tab-total { font-size: 16px; margin-top: 2px; font-variant-numeric: tabular-nums; letter-spacing: 0.5px; pointer-events: none; }
+
+.app2-batch-panel { background: transparent; margin-bottom: 15px; }
+.app2-batch-title {
+font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;
+background: var(--header-green); padding: 10px 12px; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.5); letter-spacing: 1px;
+}
+
+.app2-rows-container { display: flex; flex-direction: column; gap: 4px; }
+.app2-player-row {
+display: flex; align-items: center; justify-content: space-between; background: linear-gradient(90deg, rgba(30,41,59,1) 0%, rgba(15,23,42,1) 100%);
+padding: 10px 12px; border-radius: 4px; border: 1px solid var(--border-color); border-left-width: 6px;
+transition: transform 0.8s cubic-bezier(0.25, 1, 0.5, 1), background 0.2s;
+}
+#app2-player-row-0 { border-left-color: var(--p1-color); } #app2-player-row-1 { border-left-color: var(--p2-color); } #app2-player-row-2 { border-left-color: var(--p3-color); } #app2-player-row-3 { border-left-color: var(--p4-color); }
+.app2-player-row-name { font-weight: bold; font-size: 15px; width: 80px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app2-player-row-val { font-size: 18px; font-weight: bold; color: #fff; text-align: right; flex: 1; padding-right: 5px; font-variant-numeric: tabular-nums; }
+
+.app2-ledger { background: #0f172a; border: 1px solid var(--border-color); border-radius: 6px; padding: 8px; height: 90px; overflow-y: auto; margin-bottom: 12px; }
+.app2-ledger-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.app2-ledger-table th { background: #1e293b; color: var(--text-sub); padding: 4px; text-align: center; font-size: 11px; border-bottom: 1px solid var(--border-color); }
+.app2-ledger-table td { padding: 5px 4px; text-align: center; border-bottom: 1px dashed #334155; font-variant-numeric: tabular-nums; }
+
+.app2-input-display { background: #000; border: 1px solid var(--accent-color); border-radius: 6px; padding: 10px 12px; font-size: 22px; font-weight: bold; text-align: right; margin-bottom: 10px; min-height: 48px; color: #38bdf8; overflow-x: auto; white-space: nowrap; box-shadow: inset 0 2px 4px rgba(0,0,0,0.5); }
+.app2-keypad { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px; }
+.app2-key { background: #1e293b; border: 1px solid var(--border-color); border-radius: 8px; padding: 12px 0; font-size: 18px; font-weight: bold; color: var(--text-main); display: flex; align-items: center; justify-content: center; cursor: pointer; user-select: none; box-shadow: 0 3px 0 #0f172a; transition: all 0.1s; }
+.app2-key:active { transform: translateY(3px); box-shadow: none; background: #334155; }
+.app2-key.fn { background: #334155; color: #cbd5e1; font-size: 16px; }
+.app2-key.op { background: #0f172a; color: var(--accent-color); font-size: 22px; border-color: #1e293b; }
+.app2-key.calc { background: var(--header-green); color: #fff; border-color: #002914; box-shadow: 0 3px 0 #001a0d; grid-column: span 4; padding: 14px 0; }
+.app2-key.calc:active { background: #002914; }
+
+.app2-result-area { margin-top: 10px; padding: 15px; background-color: #0f172a; border-radius: 8px; border: 1px solid var(--border-color); }
+.app2-transfer-area { margin-top: 15px; padding-top: 10px; border-top: 1px solid var(--border-color); }
+.app2-transfer-item { display: flex; justify-content: space-between; align-items: center; background: #1e293b; padding: 10px 12px; margin-bottom: 8px; border-radius: 6px; border: 1px solid var(--border-color); font-size: 15px; }
+.app2-pay-from { color: #ef4444; font-weight: bold; }
+.app2-pay-to { color: #38bdf8; font-weight: bold; }
+.text-win { color: var(--accent-color); }
+.text-lose { color: #ef4444; }
+
+/* ==================================
+保存・履歴ページ用スタイル
+================================== */
+.history-section-title {
+font-size: 15px; font-weight: bold; margin-bottom: 12px; color: var(--accent-color);
+border-bottom: 1px solid var(--border-color); padding-bottom: 5px; margin-top: 20px;
+}
+.history-controls { display: flex; gap: 10px; margin-bottom: 20px; }
+.history-btn {
+flex: 1; padding: 12px 10px; border-radius: 6px; font-size: 13px; font-weight: bold;
+cursor: pointer; text-align: center; border: none; color: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+}
+.btn-save { background: linear-gradient(135deg, #10b981, #059669); }
+.btn-reset { background: linear-gradient(135deg, #ef4444, #b91c1c); }
+
+/* アコーディオン部分 (JS制御) */
+.archive-item {
+background: #0f172a; border: 1px solid var(--border-color); border-radius: 6px; margin-bottom: 10px; overflow: hidden;
+}
+.archive-header {
+padding: 12px; cursor: pointer; display: flex; flex-direction: column; gap: 5px;
+-webkit-tap-highlight-color: transparent; user-select: none;
+}
+/* タイトルと日付のレイアウト */
+.archive-title-row { display: flex; justify-content: space-between; align-items: baseline; }
+.archive-title { font-size: 15px; font-weight: bold; color: var(--text-main); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 10px; }
+.archive-date-sub { font-size: 11px; color: #94a3b8; white-space: nowrap; }
+.archive-date-sub::after { content: '▼'; font-size: 10px; margin-left: 8px; transition: transform 0.2s; display: inline-block; }
+.archive-item.open .archive-date-sub::after { transform: rotate(180deg); color: var(--accent-color); }
+
+.archive-summary { display: grid; grid-template-columns: repeat(4, 1fr); text-align: center; font-size: 13px; font-weight: bold; margin-top: 5px; pointer-events: none; }
+
+.archive-content { display: none; padding: 0 12px 12px; border-top: 1px dashed var(--border-color); margin-top: 8px; padding-top: 12px; }
+.archive-item.open .archive-content { display: block; animation: fadeIn 0.3s ease; }
+
+/* 復元・削除ボタン */
+.history-action-btns { display: flex; gap: 10px; margin-top: 15px; }
+.btn-restore {
+flex: 1; background: rgba(56, 189, 248, 0.1); border: 1px solid var(--accent-color); color: var(--accent-color);
+padding: 10px; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; transition: 0.2s;
+}
+.btn-restore:active { background: rgba(56, 189, 248, 0.3); }
+.btn-delete {
+flex: 1; background: transparent; border: 1px solid #ef4444; color: #ef4444;
+padding: 10px; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; transition: 0.2s;
+}
+.btn-delete:active { background: rgba(239, 68, 68, 0.2); }
+</style>
+</head>
+<body>
+
+<div class="app-container">
+
+<!-- ===============================
+[Home] ホーム画面
+================================ -->
+<div id="screen-home" class="screen active">
+<div class="home-header">
+<h2 style="font-size: 24px; text-shadow: 0 2px 4px rgba(0,0,0,0.5);">麻雀精算ツール集</h2>
+<p style="font-size: 14px;">用途に合わせてアプリを選んでください</p>
+</div>
+
+<div class="player-setup-card">
+<div class="player-setup-title">👥 プレイヤー名設定</div>
+<div class="player-setup-grid">
+<div class="player-setup-item"><span class="p1-text">P1</span><input type="text" id="p-name-0" value="プレイヤー1" oninput="updatePlayerUI(); saveData();"></div>
+<div class="player-setup-item"><span class="p2-text">P2</span><input type="text" id="p-name-1" value="プレイヤー2" oninput="updatePlayerUI(); saveData();"></div>
+<div class="player-setup-item"><span class="p3-text">P3</span><input type="text" id="p-name-2" value="プレイヤー3" oninput="updatePlayerUI(); saveData();"></div>
+<div class="player-setup-item"><span class="p4-text">P4</span><input type="text" id="p-name-3" value="プレイヤー4" oninput="updatePlayerUI(); saveData();"></div>
+</div>
+</div>
+
+<div class="menu-grid" style="margin-top: 20px;">
+<div class="menu-btn" onclick="switchScreen('app1')">🧮 持ち点入力アプリ</div>
+<div class="menu-btn" onclick="switchScreen('app2')">📺 電卓テンキーアプリ</div>
+<div class="menu-btn" onclick="switchScreen('app3')">✏️ ポイント直接入力</div>
+<div class="menu-btn" onclick="switchScreen('history')" style="background:var(--bg-base); border-color:#64748b; color:#cbd5e1;">📁 保存・履歴を見る</div>
+</div>
+</div>
+
+<!-- ===============================
+[App1] 持ち点入力アプリ
+================================ -->
+<div id="screen-app1" class="screen">
+<div class="card-container">
+<h2>持ち点入力 精算</h2>
+<div class="rate-input-area" style="margin-bottom: 15px;">
+<label class="input-label">レート:</label>
+1000点 = <input type="number" id="app1-rate" value="50" step="10" min="0" inputmode="numeric" onfocus="this.select()" oninput="saveData()"> 円
+</div>
+<hr style="border: 0; border-top: 1px solid var(--border-color); margin-bottom: 15px;">
+
+<div class="player-input"><label class="input-label p1-text" id="app1-lbl-0">プレイヤー1:</label><input type="number" id="app1-p1" onfocus="this.select()" oninput="app1_autoFill()"></div>
+<div class="player-input"><label class="input-label p2-text" id="app1-lbl-1">プレイヤー2:</label><input type="number" id="app1-p2" onfocus="this.select()" oninput="app1_autoFill()"></div>
+<div class="player-input"><label class="input-label p3-text" id="app1-lbl-2">プレイヤー3:</label><input type="number" id="app1-p3" onfocus="this.select()" oninput="app1_autoFill()"></div>
+<div class="player-input"><label class="input-label p4-text" id="app1-lbl-3">プレイヤー4:</label><input type="number" id="app1-p4" class="auto-filled" placeholder="自動入力" onfocus="this.select()"></div>
+
+
+<div class="rule-settings">
+<div class="rule-title">持ち点・返し点</div>
+<div class="rule-row">
+<div class="rule-item"><div class="rule-label">持ち点</div><input type="number" id="app1-start-point" value="25000" step="1000" inputmode="numeric" oninput="app1_autoFill(); saveData();"></div>
+<div class="rule-item"><div class="rule-label">返し点</div><input type="number" id="app1-return-point" value="30000" step="1000" inputmode="numeric" oninput="saveData();"></div>
+</div>
+<div class="rule-title" style="margin-top: 12px;">順位点 (ウマ)</div>
+<div class="rule-row">
+<div class="rule-item"><div class="rule-label">1位</div><input type="number" id="app1-uma1" value="50" oninput="saveData();"></div>
+<div class="rule-item"><div class="rule-label">2位</div><input type="number" id="app1-uma2" value="10" oninput="saveData();"></div>
+</div>
+<div class="rule-row">
+<div class="rule-item"><div class="rule-label">3位</div><input type="number" id="app1-uma3" value="-10" oninput="saveData();"></div>
+<div class="rule-item"><div class="rule-label">4位</div><input type="number" id="app1-uma4" value="-30" oninput="saveData();"></div>
+</div>
+</div>
+
+<button class="calc-btn" onclick="app1_calculate()">精算を計算する</button>
+<div id="app1-result" class="result-area" style="display: none;"></div>
+</div>
+</div>
+
+<!-- ===============================
+[App2] 電卓テンキーアプリ
+================================ -->
+<div id="screen-app2" class="screen">
+<div class="card-container" style="padding: 15px 12px;">
+<div class="app2-setting-bar">
+<span>レート (1000点=)</span>
+<div><input type="number" id="app2-rate" value="50" inputmode="numeric" onfocus="this.select()" oninput="saveData()"> 円</div>
+</div>
+
+<div class="app2-batch-title" style="margin-bottom: 12px;">
+<span id="app2-batch-title-text">第 1 試合 (スコア入力)</span>
+</div>
+
+<div class="app2-tabs" id="app2-tabs-container">
+<div class="app2-tab active" id="app2-tab-0" onclick="app2_selectTarget(0)"><span class="app2-tab-name" id="app2-tabname-0">P1</span><div class="app2-tab-total" id="app2-total-0">0</div></div>
+<div class="app2-tab" id="app2-tab-1" onclick="app2_selectTarget(1)"><span class="app2-tab-name" id="app2-tabname-1">P2</span><div class="app2-tab-total" id="app2-total-1">0</div></div>
+<div class="app2-tab" id="app2-tab-2" onclick="app2_selectTarget(2)"><span class="app2-tab-name" id="app2-tabname-2">P3</span><div class="app2-tab-total" id="app2-total-2">0</div></div>
+<div class="app2-tab" id="app2-tab-3" onclick="app2_selectTarget(3)"><span class="app2-tab-name" id="app2-tabname-3">P4</span><div class="app2-tab-total" id="app2-total-3">0</div></div>
+</div>
+
+<div class="app2-batch-panel">
+<div class="app2-batch-title" style="background: transparent; box-shadow: none; padding: 0 4px; margin-bottom: 8px;">
+<span style="font-size: 13px; color: var(--text-sub);">🏆 総合順位</span>
+</div>
+<div class="app2-rows-container" id="app2-rows-container">
+<div id="app2-player-row-0" class="app2-player-row" data-player="0"><span class="app2-player-row-name" id="app2-rowname-0">P1</span><span class="app2-player-row-val" id="app2-rowval-0">0 pt</span></div>
+<div id="app2-player-row-1" class="app2-player-row" data-player="1"><span class="app2-player-row-name" id="app2-rowname-1">P2</span><span class="app2-player-row-val" id="app2-rowval-1">0 pt</span></div>
+<div id="app2-player-row-2" class="app2-player-row" data-player="2"><span class="app2-player-row-name" id="app2-rowname-2">P3</span><span class="app2-player-row-val" id="app2-rowval-2">0 pt</span></div>
+<div id="app2-player-row-3" class="app2-player-row" data-player="3"><span class="app2-player-row-name" id="app2-rowname-3">P4</span><span class="app2-player-row-val" id="app2-rowval-3">0 pt</span></div>
+</div>
+<button class="calc-btn" onclick="app2_commitGame()" style="margin-top: 15px;">📥 結果を一覧に反映する</button>
+</div>
+
+<div class="app2-ledger">
+<table class="app2-ledger-table">
+<thead>
+<tr><th>試合</th><th id="app2-th-0">P1</th><th id="app2-th-1">P2</th><th id="app2-th-2">P3</th><th id="app2-th-3">P4</th></tr>
+</thead>
+<tbody id="app2-ledger-tbody"></tbody>
+</table>
+</div>
+
+<div class="app2-input-display" id="app2-current-input"></div>
+
+<div class="app2-keypad">
+<div class="app2-key fn" onclick="app2_pressKey('C')">CLR</div>
+<div class="app2-key fn" onclick="app2_pressKey('BS')">DEL</div>
+<div class="app2-key fn" onclick="app2_pressKey('UNDO')">UNDO</div>
+<div class="app2-key op" onclick="app2_pressKey('+')">＋</div>
+
+<div class="app2-key" onclick="app2_pressKey('7')">7</div><div class="app2-key" onclick="app2_pressKey('8')">8</div><div class="app2-key" onclick="app2_pressKey('9')">9</div><div class="app2-key op" onclick="app2_pressKey('-')">－</div>
+<div class="app2-key" onclick="app2_pressKey('4')">4</div><div class="app2-key" onclick="app2_pressKey('5')">5</div><div class="app2-key" onclick="app2_pressKey('6')">6</div><div class="app2-key" onclick="app2_pressKey('0')">0</div>
+<div class="app2-key" onclick="app2_pressKey('1')">1</div><div class="app2-key" onclick="app2_pressKey('2')">2</div><div class="app2-key" onclick="app2_pressKey('3')">3</div><div class="app2-key" onclick="app2_pressKey('.')">.</div>
+
+<div class="app2-key calc" onclick="app2_calculate()">💰 現金精算を開く</div>
+</div>
+<div id="app2-result" class="app2-result-area" style="display: none;"></div>
+</div>
+</div>
+
+<!-- ===============================
+[App3] ポイント直接入力アプリ
+================================ -->
+<div id="screen-app3" class="screen">
+<div class="card-container">
+<h2>ポイント直接入力 精算</h2>
+<div class="rate-input-area" style="margin-bottom: 15px;">
+<label class="input-label">レート:</label>
+1000点 = <input type="number" id="app3-rate" value="50" step="10" inputmode="numeric" oninput="saveData()"> 円
+</div>
+<hr style="border: 0; border-top: 1px solid var(--border-color); margin-bottom: 15px;">
+
+<div class="player-input"><label class="input-label p1-text" id="app3-lbl-0">P1:</label><input type="number" id="app3-p1" oninput="app3_autoFill()"> <span class="unit">pt</span></div>
+<div class="player-input"><label class="input-label p2-text" id="app3-lbl-1">P2:</label><input type="number" id="app3-p2" oninput="app3_autoFill()"> <span class="unit">pt</span></div>
+<div class="player-input"><label class="input-label p3-text" id="app3-lbl-2">P3:</label><input type="number" id="app3-p3" oninput="app3_autoFill()"> <span class="unit">pt</span></div>
+<div class="player-input"><label class="input-label p4-text" id="app3-lbl-3">P4:</label><input type="number" id="app3-p4" class="auto-filled" onfocus="this.select()"> <span class="unit">pt</span></div>
+
+<button class="calc-btn" onclick="app3_calculate()">現金を計算する</button>
+<div id="app3-result" class="result-area" style="display: none;"></div>
+</div>
+</div>
+
+<!-- ===============================
+[History] 履歴・保存ページ
+================================ -->
+<div id="screen-history" class="screen">
+<div class="card-container">
+<h2>📝 スコア履歴</h2>
+
+<div class="history-section-title">現在の対局 (テンキーアプリの状況)</div>
+
+<table class="app2-ledger-table" style="background:#0f172a; margin-bottom:15px; border:1px solid var(--border-color); border-radius:6px; overflow:hidden;">
+<thead>
+<tr>
+<th>試合</th>
+<th id="hist-th-0" class="p1-text">P1</th><th id="hist-th-1" class="p2-text">P2</th>
+<th id="hist-th-2" class="p3-text">P3</th><th id="hist-th-3" class="p4-text">P4</th>
+</tr>
+</thead>
+<tbody id="hist-current-tbody"></tbody>
+<tfoot id="hist-current-tfoot" style="background:#1e293b; font-weight:bold;"></tfoot>
+</table>
+
+<div class="history-controls">
+<button class="history-btn btn-save" onclick="archiveCurrentScores()">📁 今の履歴を保存</button>
+<button class="history-btn btn-reset" onclick="resetCurrentScores()">🗑️ リセット</button>
+</div>
+
+<div class="history-section-title">バックアップ</div>
+<div class="history-controls">
+<button class="history-btn" style="background:#334155;" onclick="exportData()">⬇️ 書き出し</button>
+<button class="history-btn" style="background:#334155;" onclick="document.getElementById('import-file').click()">⬆️ 読み込み</button>
+<input type="file" id="import-file" accept=".json,application/json" style="display:none;" onchange="importData(event)">
+</div>
+<p style="font-size:11px; color:var(--text-sub); margin-bottom:10px;">履歴をファイルに保存できます。機種変更やデータ消去に備えて、ときどき書き出してね。</p>
+
+<div class="history-section-title">過去の保存データ</div>
+<p style="font-size:11px; color:var(--text-sub); margin-bottom:10px;">タップで詳細を開けます</p>
+
+<div id="hist-archives-container">
+<!-- JSで過去データを描画 -->
+</div>
+</div>
+</div>
+
+</div>
+
+<!-- 下部ナビゲーションバナー -->
+<div class="bottom-banner">
+<div class="nav-item active" id="nav-home" onclick="switchScreen('home')"><span class="icon">🏠</span>ホーム</div>
+<div class="nav-item" id="nav-app1" onclick="switchScreen('app1')"><span class="icon">🧮</span>持ち点</div>
+<div class="nav-item" id="nav-app2" onclick="switchScreen('app2')"><span class="icon">📺</span>テンキー</div>
+<div class="nav-item" id="nav-app3" onclick="switchScreen('app3')"><span class="icon">✏️</span>ポイント</div>
+<div class="nav-item" id="nav-history" onclick="switchScreen('history')"><span class="icon">📁</span>履歴</div>
+</div>
+
+<script>
+/* =========================================
+[LocalStorage] 保存・復元処理
+========================================= */
+let app2_scores = [[], [], [], []];
+let app2_prevTotals = [0, 0, 0, 0];
+let app2_activeTarget = 0;
+let app2_tempInputs = ["", "", "", ""];
+let mahjong_archives = [];
+
+function saveData() {
+try {
+const names = [document.getElementById('p-name-0').value, document.getElementById('p-name-1').value, document.getElementById('p-name-2').value, document.getElementById('p-name-3').value];
+localStorage.setItem('mahjong_pNames', JSON.stringify(names));
+localStorage.setItem('mahjong_app1_rate', document.getElementById('app1-rate').value);
+localStorage.setItem('mahjong_app1_start', document.getElementById('app1-start-point').value);
+localStorage.setItem('mahjong_app1_return', document.getElementById('app1-return-point').value);
+const uma = [document.getElementById('app1-uma1').value, document.getElementById('app1-uma2').value, document.getElementById('app1-uma3').value, document.getElementById('app1-uma4').value];
+localStorage.setItem('mahjong_app1_uma', JSON.stringify(uma));
+localStorage.setItem('mahjong_app2_rate', document.getElementById('app2-rate').value);
+localStorage.setItem('mahjong_app2_scores', JSON.stringify(app2_scores));
+localStorage.setItem('mahjong_app3_rate', document.getElementById('app3-rate').value);
+localStorage.setItem('mahjong_archives', JSON.stringify(mahjong_archives));
+} catch(e) { console.log('Save failed:', e); }
+}
+
+function loadData() {
+try {
+const names = JSON.parse(localStorage.getItem('mahjong_pNames'));
+if (names && names.length === 4) { for (let i = 0; i < 4; i++) { if (names[i] !== undefined) document.getElementById(`p-name-${i}`).value = names[i]; } }
+const app1Rate = localStorage.getItem('mahjong_app1_rate'); if (app1Rate !== null) document.getElementById('app1-rate').value = app1Rate;
+const app1Start = localStorage.getItem('mahjong_app1_start'); if (app1Start !== null) document.getElementById('app1-start-point').value = app1Start;
+const app1Return = localStorage.getItem('mahjong_app1_return'); if (app1Return !== null) document.getElementById('app1-return-point').value = app1Return;
+const uma = JSON.parse(localStorage.getItem('mahjong_app1_uma'));
+if (uma && uma.length === 4) { document.getElementById('app1-uma1').value = uma[0]; document.getElementById('app1-uma2').value = uma[1]; document.getElementById('app1-uma3').value = uma[2]; document.getElementById('app1-uma4').value = uma[3]; }
+const app2Rate = localStorage.getItem('mahjong_app2_rate'); if (app2Rate !== null) document.getElementById('app2-rate').value = app2Rate;
+const savedScores = JSON.parse(localStorage.getItem('mahjong_app2_scores')); if (savedScores && savedScores.length === 4) app2_scores = savedScores;
+const app3Rate = localStorage.getItem('mahjong_app3_rate'); if (app3Rate !== null) document.getElementById('app3-rate').value = app3Rate;
+const savedArchives = JSON.parse(localStorage.getItem('mahjong_archives')); if (savedArchives) mahjong_archives = savedArchives;
+
+app2_prevTotals = [app2_getSum(0), app2_getSum(1), app2_getSum(2), app2_getSum(3)];
+} catch(e) { console.log('Load failed:', e); }
+}
+
+function esc(s) {
+return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function exportData() {
+const data = {
+app: 'mahjong-settle', version: 1,
+names: [0,1,2,3].map(getPlayerName),
+scores: app2_scores,
+archives: mahjong_archives
+};
+const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+const a = document.createElement('a');
+const d = new Date();
+a.href = URL.createObjectURL(blob);
+a.download = `mahjong_backup_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.json`;
+document.body.appendChild(a); a.click(); a.remove();
+setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function importData(ev) {
+const file = ev.target.files[0]; ev.target.value = '';
+if (!file) return;
+const reader = new FileReader();
+reader.onload = () => {
+try {
+const data = JSON.parse(reader.result);
+const okScores = s => Array.isArray(s) && s.length === 4 && s.every(a => Array.isArray(a) && a.every(n => typeof n === 'number'));
+if (data.app !== 'mahjong-settle' || !Array.isArray(data.archives) || !data.archives.every(a => a && okScores(a.scores) && Array.isArray(a.names) && a.names.length === 4)) throw new Error('形式が違います');
+if (!confirm(`履歴 ${data.archives.length} 件を読み込みます。\n今ある履歴の後ろに追加されます（現在の対局は変わりません）。`)) return;
+data.archives.forEach(a => mahjong_archives.push({
+title: String(a.title || ''), date: String(a.date || ''),
+names: a.names.map(String), scores: a.scores
+}));
+saveData(); renderHistoryPage();
+alert('読み込みました！');
+} catch (e) { alert('読み込めませんでした: ' + e.message); }
+};
+reader.readAsText(file);
+}
+
+function getPlayerName(index) {
+const val = document.getElementById(`p-name-${index}`).value.trim(); return val !== "" ? val : `P${index + 1}`;
+}
+
+function updatePlayerUI() {
+for (let i = 0; i < 4; i++) {
+const name = getPlayerName(i);
+const lbl1 = document.getElementById(`app1-lbl-${i}`); if (lbl1) lbl1.innerText = `${name}:`;
+const tab2 = document.getElementById(`app2-tabname-${i}`); if (tab2) tab2.innerText = name;
+const rowName = document.getElementById(`app2-rowname-${i}`); if (rowName) rowName.innerText = name;
+const th2 = document.getElementById(`app2-th-${i}`); if (th2) th2.innerText = name;
+const lbl3 = document.getElementById(`app3-lbl-${i}`); if (lbl3) lbl3.innerText = `${name}:`;
+const hth = document.getElementById(`hist-th-${i}`); if (hth) hth.innerText = name;
+}
+}
+
+function switchScreen(targetId) {
+document.querySelectorAll('.screen').forEach(screen => screen.classList.remove('active'));
+document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
+document.getElementById('screen-' + targetId).classList.add('active');
+document.getElementById('nav-' + targetId).classList.add('active');
+
+if (targetId === 'history') renderHistoryPage();
+window.scrollTo(0, 0);
+}
+
+/* =========================================
+[App1 / App3] マイナス入力対応の自動補動と計算
+========================================= */
+function parseVal(id) {
+const v = document.getElementById(id).value;
+if (v === "" || v === "-") return 0;
+const n = parseInt(v, 10);
+return isNaN(n) ? 0 : n;
+}
+
+function app1_autoFill() {
+if (document.activeElement.id === 'app1-p4') return;
+const startPoint = parseInt(document.getElementById('app1-start-point').value) || 25000;
+const p1 = parseVal('app1-p1');
+const p2 = parseVal('app1-p2');
+const p3 = parseVal('app1-p3');
+document.getElementById('app1-p4').value = (startPoint * 4) - (p1 + p2 + p3);
+}
+
+function app1_calculate() {
+const rate = parseFloat(document.getElementById('app1-rate').value) || 50;
+const startPoint = parseInt(document.getElementById('app1-start-point').value) || 25000;
+const basePoint = parseInt(document.getElementById('app1-return-point').value) || 30000;
+const umaOka = [ parseFloat(document.getElementById('app1-uma1').value)||0, parseFloat(document.getElementById('app1-uma2').value)||0, parseFloat(document.getElementById('app1-uma3').value)||0, parseFloat(document.getElementById('app1-uma4').value)||0 ];
+
+const p1 = parseVal('app1-p1');
+const p2 = parseVal('app1-p2');
+const p3 = parseVal('app1-p3');
+const p4 = parseVal('app1-p4');
+
+const resultArea = document.getElementById('app1-result'); resultArea.style.display = 'block';
+
+if (p1 + p2 + p3 + p4 !== startPoint * 4) { resultArea.innerHTML = `<div class="error-msg">エラー: 合計点が${startPoint*4}点になりません。</div>`; return; }
+
+let players = [ { id: 1, name: getPlayerName(0), score: p1 }, { id: 2, name: getPlayerName(1), score: p2 }, { id: 3, name: getPlayerName(2), score: p3 }, { id: 4, name: getPlayerName(3), score: p4 } ];
+players.sort((a, b) => b.score - a.score);
+let currentRank = 0;
+while (currentRank < 4) {
+let tieCount = 1, umaOkaSum = umaOka[currentRank];
+for (let i = currentRank + 1; i < 4; i++) { if (players[i].score === players[currentRank].score) { tieCount++; umaOkaSum += umaOka[i]; } else break; }
+const avg = umaOkaSum / tieCount; for (let i = 0; i < tieCount; i++) players[currentRank + i].assignedUmaOka = avg; currentRank += tieCount;
+}
+players.forEach(p => { p.finalPoint = Math.round(((p.score - basePoint) / 1000 + p.assignedUmaOka) * 10) / 10; p.cash = Math.round(p.finalPoint * rate); });
+players.sort((a, b) => a.id - b.id);
+
+let html = '<h3 style="margin-top:0; margin-bottom:10px;">精算結果</h3>';
+players.forEach(p => { const colorClass = p.cash > 0 ? "text-win" : (p.cash < 0 ? "text-lose" : ""); html += `<div class="result-item"><span>${esc(p.name)}</span><div><span class="point-detail">(${p.finalPoint > 0 ? '+' : ''}${p.finalPoint} pt)</span><span class="${colorClass}" style="font-weight: bold;">${p.cash > 0 ? '+' : ''}${p.cash} 円</span></div></div>`; });
+for(let i=0; i<4; i++){ app2_tempInputs[i] = players[i].finalPoint.toString(); } app2_updateUI();
+html += '<div style="margin-top:15px; font-size:12px; color:#38bdf8; text-align:center; padding:8px; background:rgba(56,189,248,0.1); border-radius:4px;">✅ アプリ2(テンキー)の入力欄にポイントを転記しました</div>';
+resultArea.innerHTML = html;
+}
+
+function app3_autoFill() {
+if (document.activeElement.id === 'app3-p4') return;
+const p1 = parseFloat(document.getElementById('app3-p1').value) || 0; const p2 = parseFloat(document.getElementById('app3-p2').value) || 0; const p3 = parseFloat(document.getElementById('app3-p3').value) || 0;
+document.getElementById('app3-p4').value = Math.round(-(p1 + p2 + p3) * 10) / 10;
+}
+function app3_calculate() {
+const rate = parseFloat(document.getElementById('app3-rate').value) || 0;
+const pts = [ parseFloat(document.getElementById('app3-p1').value)||0, parseFloat(document.getElementById('app3-p2').value)||0, parseFloat(document.getElementById('app3-p3').value)||0, parseFloat(document.getElementById('app3-p4').value)||0 ];
+const resultArea = document.getElementById('app3-result'); resultArea.style.display = 'block';
+
+if (Math.round(pts.reduce((a,b)=>a+b,0)*10)/10 !== 0) { resultArea.innerHTML = `<div class="error-msg">エラー: ポイントの合計が 0 になりません。</div>`; return; }
+
+let html = '<h3 style="margin-top:0; margin-bottom:10px;">精算結果</h3>';
+pts.forEach((pt, i) => { const cash = Math.round(pt * rate); const colorClass = cash > 0 ? "text-win" : (cash < 0 ? "text-lose" : ""); html += `<div class="result-item"><span>${esc(getPlayerName(i))} (${pt > 0 ? '+' : ''}${pt} pt)</span><span class="${colorClass}" style="font-weight: bold;">${cash > 0 ? '+' : ''}${cash} 円</span></div>`; });
+for(let i=0; i<4; i++){ app2_tempInputs[i] = pts[i].toString(); } app2_updateUI();
+html += '<div style="margin-top:15px; font-size:12px; color:#38bdf8; text-align:center; padding:8px; background:rgba(56,189,248,0.1); border-radius:4px;">✅ アプリ2(テンキー)の入力欄にポイントを転記しました</div>';
+resultArea.innerHTML = html;
+}
+
+/* =========================================
+[App2] 電卓テンキーアプリ
+========================================= */
+function app2_getSum(idx) { return Math.round(app2_scores[idx].reduce((a, b) => a + b, 0) * 10) / 10; }
+
+function app2_applyFlip(containerId, itemSelector) {
+const container = document.getElementById(containerId); const items = Array.from(container.querySelectorAll(itemSelector));
+const firstRects = new Map(); items.forEach(item => { firstRects.set(item.dataset.player, item.getBoundingClientRect()); });
+let currentTotals = [app2_getSum(0), app2_getSum(1), app2_getSum(2), app2_getSum(3)];
+let sortedPlayers = [0, 1, 2, 3].map(i => ({ id: i, score: currentTotals[i] })); sortedPlayers.sort((a, b) => b.score - a.score || a.id - b.id);
+sortedPlayers.forEach((p, index) => { const el = container.querySelector(`[data-player="${p.id}"]`); if (el) { el.style.order = index; container.appendChild(el); } });
+items.forEach(item => {
+const first = firstRects.get(item.dataset.player); const last = item.getBoundingClientRect();
+const deltaX = first.left - last.left; const deltaY = first.top - last.top;
+if (deltaX !== 0 || deltaY !== 0) {
+item.style.transition = 'none'; item.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+requestAnimationFrame(() => { requestAnimationFrame(() => { item.style.transition = 'transform 0.8s cubic-bezier(0.25, 1, 0.5, 1)'; item.style.transform = 'translate(0, 0)'; }); });
+}
+});
+}
+
+function app2_updateUI() {
+let currentTotals = [app2_getSum(0), app2_getSum(1), app2_getSum(2), app2_getSum(3)];
+for (let i = 0; i < 4; i++) {
+const rowValEl = document.getElementById(`app2-rowval-${i}`);
+rowValEl.innerText = (currentTotals[i] > 0 ? `+${currentTotals[i]}` : currentTotals[i]) + ' pt';
+rowValEl.style.color = currentTotals[i] > 0 ? 'var(--accent-color)' : (currentTotals[i] < 0 ? '#ef4444' : 'var(--text-main)');
+}
+app2_applyFlip('app2-rows-container', '.app2-player-row');
+
+const maxGames = Math.max(app2_scores[0].length, app2_scores[1].length, app2_scores[2].length, app2_scores[3].length);
+const titleText = document.getElementById('app2-batch-title-text'); if (titleText) titleText.innerText = `第 ${maxGames + 1} 試合 (スコア入力)`;
+for (let i = 0; i < 4; i++) {
+const tab = document.getElementById(`app2-tab-${i}`); if (tab) tab.className = (i === app2_activeTarget) ? 'app2-tab active' : 'app2-tab';
+const tabTotalEl = document.getElementById(`app2-total-${i}`); if (tabTotalEl) { const valStr = app2_tempInputs[i]; tabTotalEl.innerText = (valStr !== "" ? valStr : "0"); tabTotalEl.style.color = "var(--text-main)"; }
+}
+let tbodyHtml = '';
+for (let g = 0; g < maxGames; g++) {
+tbodyHtml += `<tr><td style="color:var(--text-sub);">${g+1}</td>
+<td class="${app2_scores[0][g]>0?'text-win':(app2_scores[0][g]<0?'text-lose':'')}">${app2_scores[0][g] !== undefined ? (app2_scores[0][g] > 0 ? '+'+app2_scores[0][g] : app2_scores[0][g]) : '-'}</td>
+<td class="${app2_scores[1][g]>0?'text-win':(app2_scores[1][g]<0?'text-lose':'')}">${app2_scores[1][g] !== undefined ? (app2_scores[1][g] > 0 ? '+'+app2_scores[1][g] : app2_scores[1][g]) : '-'}</td>
+<td class="${app2_scores[2][g]>0?'text-win':(app2_scores[2][g]<0?'text-lose':'')}">${app2_scores[2][g] !== undefined ? (app2_scores[2][g] > 0 ? '+'+app2_scores[2][g] : app2_scores[2][g]) : '-'}</td>
+<td class="${app2_scores[3][g]>0?'text-win':(app2_scores[3][g]<0?'text-lose':'')}">${app2_scores[3][g] !== undefined ? (app2_scores[3][g] > 0 ? '+'+app2_scores[3][g] : app2_scores[3][g]) : '-'}</td></tr>`;
+}
+const tbodyEl = document.getElementById('app2-ledger-tbody'); if (tbodyEl) tbodyEl.innerHTML = tbodyHtml;
+const ledgerArea = document.querySelector('.app2-ledger'); if (ledgerArea) ledgerArea.scrollTop = ledgerArea.scrollHeight;
+const currentInputEl = document.getElementById('app2-current-input'); if (currentInputEl) currentInputEl.innerText = app2_tempInputs[app2_activeTarget];
+}
+
+function app2_selectTarget(idx) { app2_activeTarget = idx; const resEl = document.getElementById('app2-result'); if (resEl) resEl.style.display = 'none'; app2_updateUI(); }
+function app2_evaluateInput(str) { if (!str) return 0; let cleanStr = str.replace(/[+\-]$/, ''); if (!cleanStr) return 0; try { let val = new Function('return ' + cleanStr)(); return isNaN(val) ? 0 : val; } catch(e) { return 0; } }
+
+function app2_pressKey(key) {
+if (key === 'C') { app2_tempInputs[app2_activeTarget] = ""; }
+else if (key === 'BS') { app2_tempInputs[app2_activeTarget] = app2_tempInputs[app2_activeTarget].slice(0, -1); }
+else if (key === 'UNDO') { for (let i = 0; i < 4; i++) { if (app2_scores[i].length > 0) app2_scores[i].pop(); } app2_tempInputs = ["", "", "", ""]; saveData(); }
+else {
+const current = app2_tempInputs[app2_activeTarget]; const lastChar = current.slice(-1);
+if ((key === '+' || key === '-') && (lastChar === '+' || lastChar === '-')) { app2_tempInputs[app2_activeTarget] = current.slice(0, -1) + key; } else { app2_tempInputs[app2_activeTarget] += key; }
+}
+app2_updateUI();
+}
+
+function app2_commitGame() {
+let evaluatedVals = []; for (let i = 0; i < 4; i++) { evaluatedVals.push(Math.round(app2_evaluateInput(app2_tempInputs[i]) * 10) / 10); }
+let sumCheck = Math.round(evaluatedVals.reduce((a, b) => a + b, 0) * 10) / 10;
+const resultArea = document.getElementById('app2-result');
+if (sumCheck !== 0) { resultArea.style.display = 'block'; resultArea.innerHTML = `<div class="error-msg">⚠️ 4人の合計が 0 になりません（現在: ${sumCheck > 0 ? '+' : ''}${sumCheck} pt）</div>`; return; }
+for (let i = 0; i < 4; i++) { app2_scores[i].push(evaluatedVals[i]); }
+app2_tempInputs = ["", "", "", ""]; app2_activeTarget = 0; if (resultArea) resultArea.style.display = 'none';
+saveData(); app2_updateUI();
+}
+
+function app2_calculate() {
+const rate = parseFloat(document.getElementById('app2-rate').value) || 0;
+const pts = [app2_getSum(0), app2_getSum(1), app2_getSum(2), app2_getSum(3)];
+const resultArea = document.getElementById('app2-result'); resultArea.style.display = 'block';
+
+if (Math.round(pts.reduce((a, b) => a + b, 0) * 10) / 10 !== 0) { resultArea.innerHTML = `<div class="error-msg">⚠️ 累計ポイントの合計が 0 になりません</div>`; return; }
+
+let html = '<div style="font-weight:bold; margin-bottom:10px;">【個別成績】</div>';
+let playerResults = pts.map((pt, i) => ({ name: getPlayerName(i), cash: Math.round(pt * rate), pt: pt }));
+playerResults.forEach(p => { const colorClass = p.cash > 0 ? "text-win" : (p.cash < 0 ? "text-lose" : ""); html += `<div class="result-item"><span>${esc(p.name)} (${p.pt > 0 ? '+' : ''}${p.pt} pt)</span><span class="${colorClass}" style="font-weight: bold;">${p.cash > 0 ? '+' : ''}${p.cash} 円</span></div>`; });
+
+let debtors = playerResults.filter(p => p.cash < 0).map(p => ({ ...p, amount: -p.cash })).sort((a,b)=>b.amount-a.amount);
+let creditors = playerResults.filter(p => p.cash > 0).map(p => ({ ...p, amount: p.cash })).sort((a,b)=>b.amount-a.amount);
+let transfers = []; let d = 0, c = 0;
+while (d < debtors.length && c < creditors.length) {
+let payAmount = Math.min(debtors[d].amount, creditors[c].amount);
+if (payAmount > 0) transfers.push({ from: debtors[d].name, to: creditors[c].name, amount: payAmount });
+debtors[d].amount -= payAmount; creditors[c].amount -= payAmount;
+if (debtors[d].amount === 0) d++; if (creditors[c].amount === 0) c++;
+}
+if (transfers.length > 0) {
+html += `<div class="app2-transfer-area"><div style="font-weight:bold; margin-bottom:8px; font-size:14px;">【おすすめの支払い手順】</div>`;
+transfers.forEach(t => { html += `<div class="app2-transfer-item"><span><span class="app2-pay-from">${esc(t.from)}</span> <span style="color:var(--text-sub);margin:0 8px;">➡️</span> <span class="app2-pay-to">${esc(t.to)}</span></span><span style="font-weight:bold; font-size:16px; color:var(--text-main);">${t.amount} 円</span></div>`; });
+html += `</div>`;
+}
+resultArea.innerHTML = html;
+}
+
+/* =========================================
+[History] 保存・履歴ページ用 関数
+========================================= */
+function renderHistoryPage() {
+const maxGames = Math.max(app2_scores[0].length, app2_scores[1].length, app2_scores[2].length, app2_scores[3].length);
+let tbodyHtml = '';
+if (maxGames === 0) {
+tbodyHtml = `<tr><td colspan="5" style="padding:15px; color:var(--text-sub);">記録がありません</td></tr>`;
+} else {
+for (let g = 0; g < maxGames; g++) {
+tbodyHtml += `<tr><td style="color:var(--text-sub);">${g+1}</td>
+<td class="${app2_scores[0][g]>0?'text-win':(app2_scores[0][g]<0?'text-lose':'')}">${app2_scores[0][g] !== undefined ? (app2_scores[0][g] > 0 ? '+'+app2_scores[0][g] : app2_scores[0][g]) : '-'}</td>
+<td class="${app2_scores[1][g]>0?'text-win':(app2_scores[1][g]<0?'text-lose':'')}">${app2_scores[1][g] !== undefined ? (app2_scores[1][g] > 0 ? '+'+app2_scores[1][g] : app2_scores[1][g]) : '-'}</td>
+<td class="${app2_scores[2][g]>0?'text-win':(app2_scores[2][g]<0?'text-lose':'')}">${app2_scores[2][g] !== undefined ? (app2_scores[2][g] > 0 ? '+'+app2_scores[2][g] : app2_scores[2][g]) : '-'}</td>
+<td class="${app2_scores[3][g]>0?'text-win':(app2_scores[3][g]<0?'text-lose':'')}">${app2_scores[3][g] !== undefined ? (app2_scores[3][g] > 0 ? '+'+app2_scores[3][g] : app2_scores[3][g]) : '-'}</td></tr>`;
+}
+}
+document.getElementById('hist-current-tbody').innerHTML = tbodyHtml;
+
+const sums = [app2_getSum(0), app2_getSum(1), app2_getSum(2), app2_getSum(3)];
+let tfootHtml = `<tr><td style="color:var(--text-sub); font-size:11px;">合計</td>
+<td class="${sums[0]>0?'text-win':(sums[0]<0?'text-lose':'')}">${sums[0]>0?'+'+sums[0]:sums[0]}</td>
+<td class="${sums[1]>0?'text-win':(sums[1]<0?'text-lose':'')}">${sums[1]>0?'+'+sums[1]:sums[1]}</td>
+<td class="${sums[2]>0?'text-win':(sums[2]<0?'text-lose':'')}">${sums[2]>0?'+'+sums[2]:sums[2]}</td>
+<td class="${sums[3]>0?'text-win':(sums[3]<0?'text-lose':'')}">${sums[3]>0?'+'+sums[3]:sums[3]}</td></tr>`;
+document.getElementById('hist-current-tfoot').innerHTML = tfootHtml;
+
+const container = document.getElementById('hist-archives-container');
+if (mahjong_archives.length === 0) {
+container.innerHTML = '<div style="text-align:center; color:var(--text-sub); font-size:13px; padding:20px;">保存された履歴はありません</div>';
+return;
+}
+
+let archivesHtml = '';
+mahjong_archives.forEach((archive, index) => {
+let archSums = [0, 0, 0, 0];
+for(let i=0; i<4; i++){ archSums[i] = Math.round(archive.scores[i].reduce((a, b) => a + b, 0) * 10) / 10; }
+
+let rowsHtml = '';
+const gCount = Math.max(archive.scores[0].length, archive.scores[1].length, archive.scores[2].length, archive.scores[3].length);
+for(let g=0; g<gCount; g++){
+rowsHtml += `<tr><td style="color:var(--text-sub);">${g+1}</td>
+<td class="${archive.scores[0][g]>0?'text-win':(archive.scores[0][g]<0?'text-lose':'')}">${archive.scores[0][g] !== undefined ? (archive.scores[0][g] > 0 ? '+'+archive.scores[0][g] : archive.scores[0][g]) : '-'}</td>
+<td class="${archive.scores[1][g]>0?'text-win':(archive.scores[1][g]<0?'text-lose':'')}">${archive.scores[1][g] !== undefined ? (archive.scores[1][g] > 0 ? '+'+archive.scores[1][g] : archive.scores[1][g]) : '-'}</td>
+<td class="${archive.scores[2][g]>0?'text-win':(archive.scores[2][g]<0?'text-lose':'')}">${archive.scores[2][g] !== undefined ? (archive.scores[2][g] > 0 ? '+'+archive.scores[2][g] : archive.scores[2][g]) : '-'}</td>
+<td class="${archive.scores[3][g]>0?'text-win':(archive.scores[3][g]<0?'text-lose':'')}">${archive.scores[3][g] !== undefined ? (archive.scores[3][g] > 0 ? '+'+archive.scores[3][g] : archive.scores[3][g]) : '-'}</td></tr>`;
+}
+
+const displayTitle = esc(archive.title ? archive.title : archive.date);
+const displayDate = esc(archive.title ? archive.date : '');
+
+archivesHtml += `
+<div class="archive-item">
+<div class="archive-header" onclick="this.parentElement.classList.toggle('open')">
+<div class="archive-title-row">
+<span class="archive-title">${displayTitle}</span>
+<span class="archive-date-sub">${displayDate}</span>
+</div>
+<div class="archive-summary">
+<span class="${archSums[0]>0?'text-win':(archSums[0]<0?'text-lose':'')}">${archSums[0]>0?'+'+archSums[0]:archSums[0]}</span>
+<span class="${archSums[1]>0?'text-win':(archSums[1]<0?'text-lose':'')}">${archSums[1]>0?'+'+archSums[1]:archSums[1]}</span>
+<span class="${archSums[2]>0?'text-win':(archSums[2]<0?'text-lose':'')}">${archSums[2]>0?'+'+archSums[2]:archSums[2]}</span>
+<span class="${archSums[3]>0?'text-win':(archSums[3]<0?'text-lose':'')}">${archSums[3]>0?'+'+archSums[3]:archSums[3]}</span>
+</div>
+</div>
+<div class="archive-content">
+<table class="app2-ledger-table" style="background:#1e293b; border-radius:4px; overflow:hidden;">
+<thead><tr><th>試合</th><th>${esc(archive.names[0])}</th><th>${esc(archive.names[1])}</th><th>${esc(archive.names[2])}</th><th>${esc(archive.names[3])}</th></tr></thead>
+<tbody>${rowsHtml}</tbody>
+</table>
+<div class="history-action-btns">
+<button class="btn-restore" onclick="restoreArchive(${index})">🔄 テンキーに復元</button>
+<button class="btn-delete" onclick="deleteArchive(${index})">🗑️ 削除</button>
+</div>
+</div>
+</div>
+`;
+});
+container.innerHTML = archivesHtml;
+}
+
+function archiveCurrentScores() {
+if (app2_scores[0].length === 0 && app2_scores[1].length === 0 && app2_scores[2].length === 0 && app2_scores[3].length === 0) {
+alert("保存するデータがありません。"); return;
+}
+
+const now = new Date();
+const dateStr = `${now.getFullYear()}/${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getDate().toString().padStart(2,'0')} ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`;
+
+let customTitle = prompt("この履歴に名前をつけられます。\n（未入力の場合は日時になります）", "麻雀の記録");
+if (customTitle === null) return;
+if (customTitle.trim() === "") customTitle = dateStr;
+
+const archive = {
+title: customTitle,
+date: dateStr,
+names: [getPlayerName(0), getPlayerName(1), getPlayerName(2), getPlayerName(3)],
+scores: JSON.parse(JSON.stringify(app2_scores))
+};
+mahjong_archives.unshift(archive);
+
+app2_scores = [[], [], [], []];
+app2_prevTotals = [0, 0, 0, 0];
+app2_tempInputs = ["", "", "", ""];
+app2_activeTarget = 0;
+
+saveData();
+app2_updateUI();
+renderHistoryPage();
+
+alert(`「${customTitle}」として保存し、スコアをリセットしました！`);
+}
+
+function resetCurrentScores() {
+if (app2_scores.every(s => s.length === 0)) return;
+if (confirm("⚠️ 現在の対局データをすべて消去します。\n（保存されません。本当によろしいですか？）")) {
+app2_scores = [[], [], [], []];
+app2_prevTotals = [0, 0, 0, 0];
+app2_tempInputs = ["", "", "", ""];
+app2_activeTarget = 0;
+saveData();
+app2_updateUI();
+renderHistoryPage();
+}
+}
+
+function restoreArchive(index) {
+const archive = mahjong_archives[index];
+const hasCurrentData = (app2_scores[0].length > 0 || app2_scores[1].length > 0 || app2_scores[2].length > 0 || app2_scores[3].length > 0);
+const archiveName = archive.title ? archive.title : archive.date;
+
+if (hasCurrentData) {
+if (!confirm(`⚠️ 現在テンキーに入力されている対局データは消去されます。\n\n「${archiveName}」を復元して再開しますか？`)) {
+return;
+}
+} else {
+if (!confirm(`「${archiveName}」をテンキーに復元して再開しますか？`)) {
+return;
+}
+}
+
+app2_scores = JSON.parse(JSON.stringify(archive.scores));
+if (archive.names && archive.names.length === 4) {
+for (let i = 0; i < 4; i++) {
+document.getElementById(`p-name-${i}`).value = archive.names[i];
+}
+}
+
+app2_tempInputs = ["", "", "", ""];
+app2_activeTarget = 0;
+app2_prevTotals = [app2_getSum(0), app2_getSum(1), app2_getSum(2), app2_getSum(3)];
+
+updatePlayerUI();
+saveData();
+app2_updateUI();
+
+switchScreen('app2');
+alert(`「${archiveName}」をテンキーに復元しました。`);
+}
+
+function deleteArchive(index) {
+const archive = mahjong_archives[index];
+const archiveName = archive.title ? archive.title : archive.date;
+if (confirm(`「${archiveName}」を本当に削除しますか？`)) {
+mahjong_archives.splice(index, 1);
+saveData();
+renderHistoryPage();
+}
+}
+
+/* =========================================
+[初期化] 起動時処理
+========================================= */
+if ('serviceWorker' in navigator) {
+window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(e => console.log('SW failed:', e)); });
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+loadData();
+updatePlayerUI();
+app1_autoFill();
+app3_autoFill();
+app2_updateUI();
+});
+</script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 // 更新を配るときは CACHE_VERSION を上げる
-const CACHE_VERSION = 'mj-v1';
-const FILES = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE_VERSION = 'mj-v5';
+const FILES = ['./', './index.html', './logic.js', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE_VERSION).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
@@ -14,10 +14,17 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// キャッシュ優先。なければネットワーク。
+// キャッシュがあればすぐ返し、裏で最新を取り直す（次に開いたとき更新が反映される）
 self.addEventListener('fetch', (e) => {
-  if (e.request.method !== 'GET') return;
+  if (e.request.method !== 'GET' || new URL(e.request.url).origin !== self.location.origin) return;
   e.respondWith(
-    caches.match(e.request).then((hit) => hit || fetch(e.request).catch(() => caches.match('./index.html')))
+    caches.open(CACHE_VERSION).then((cache) =>
+      cache.match(e.request).then((hit) => {
+        const fetched = fetch(e.request)
+          .then((res) => { if (res && res.ok) cache.put(e.request, res.clone()); return res; })
+          .catch(() => hit || cache.match('./index.html'));
+        return hit || fetched;
+      })
+    )
   );
 });

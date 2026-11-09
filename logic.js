@@ -159,6 +159,17 @@ function calcTransfers(entries) {
   return transfers;
 }
 
+// 精算の文章（LINEなどに貼る用）。entries: [{ name, pt }]
+function buildSettlementText(title, entries) {
+  const lines = [`【${title || '対局'}】ポイントの精算`, ''];
+  entries.forEach(e => lines.push(`${e.name}  ${fmtPt1(e.pt)}pt`));
+  lines.push('');
+  const transfers = calcTransfers(entries);
+  if (!transfers.length) lines.push('受け渡しはありません');
+  else transfers.forEach(t => lines.push(`${t.from} → ${t.to}  ${t.pt.toFixed(1)}pt`));
+  return lines.join('\n');
+}
+
 /* =========================================
    対局（セッション）データ
    session = { id, title, startedAt, endedAt, dateText, names[4],

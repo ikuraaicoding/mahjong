@@ -198,6 +198,13 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .carry-sum.ok { color: var(--gold-hi); } .carry-sum.warn { color: #f0b36a; }
 .carry-text { width: 100%; padding: 10px 12px; font: 500 16px/1.6 var(--sans); color: var(--ivory); background: #0a0c10; border: 1px solid var(--line); border-radius: 8px; resize: vertical; }
 .carry-text:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 2px rgba(214,178,98,.22); }
+.tr-sum { font-size: 12px; color: var(--sub); margin: 0 2px 10px; }
+.tr-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 12px; margin-bottom: 7px; border: 1px solid var(--line); border-radius: 8px; background: #0b0e12; }
+.tr-who { display: flex; align-items: center; gap: 9px; min-width: 0; font: 600 15px var(--serif); letter-spacing: .04em; }
+.tr-who span { max-width: 6.5em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tr-from { color: var(--neg); } .tr-to { color: var(--pos); }
+.tr-arrow { color: var(--gold); font-size: 13px; }
+.tr-amt { font: 700 18px var(--sans); font-variant-numeric: tabular-nums; color: var(--gold-hi); white-space: nowrap; }
 .mem-input { width: 100%; padding: 11px 12px; font-size: 16px; margin-bottom: 8px; border-left: 4px solid var(--pc); }
 
 /* ----- ナビ・シート・トースト ----- */
@@ -258,6 +265,11 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
   <div class="panel">
     <div class="section-label"><span>ポイント推移</span></div>
     <div id="chart"></div>
+  </div>
+
+  <div class="panel">
+    <div class="section-label"><span>ポイントの精算</span><button class="mini-btn" onclick="copySettlement('cur')">コピー</button></div>
+    <div id="settle"></div>
   </div>
 
   <div class="panel">
@@ -682,6 +694,40 @@ function chartSvg(series, names) {
 
 function renderChartPanel() {
   $('chart').innerHTML = chartSvg(cumulativeSeries(state.current), [0, 1, 2, 3].map(nm));
+  $('settle').innerHTML = settlementHtml(state.current);
+}
+
+/* ---- ポイントの精算（誰が誰にいくら渡すか） ---- */
+function settlementEntries(s) {
+  const t = sessionTotals(s);
+  return [0, 1, 2, 3].map(i => ({ name: displayName(s.names[i], i), pt: t[i] }));
+}
+
+function settlementHtml(s) {
+  if (!s.games.length) return '<div class="empty">試合を記録すると、ここに受け渡しの案が出ます</div>';
+  const transfers = calcTransfers(settlementEntries(s));
+  if (!transfers.length) return '<div class="empty">全員が 0pt なので、受け渡しはありません</div>';
+  return `<div class="tr-sum">${transfers.length}回の受け渡しで精算できます</div>` + transfers.map(t =>
+    `<div class="tr-item"><span class="tr-who"><span class="tr-from">${esc(t.from)}</span><i class="tr-arrow">➡</i><span class="tr-to">${esc(t.to)}</span></span><span class="tr-amt">${t.pt.toFixed(1)} pt</span></div>`).join('');
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* 次の方法を試す */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand('copy'); ta.remove();
+    return ok;
+  } catch (e) { return false; }
+}
+
+async function copySettlement(kind, id) {
+  const s = kind === 'cur' ? state.current : state.archives.find(a => a.id === id);
+  if (!s || !s.games.length) { toast('コピーできる結果がありません'); return; }
+  const title = s.title || (kind === 'cur' ? '対局中' : '無題の対局');
+  const ok = await copyText(buildSettlementText(title, settlementEntries(s)));
+  toast(ok ? '精算の内容をコピーしました' : 'コピーできませんでした');
 }
 
 /* ---- 試合ログ ---- */
@@ -797,6 +843,7 @@ function renderDetail() {
 <div class="h-meta" style="margin:-6px 2px 12px">${esc(sessionDate(s))} ・ ${s.games.length} 試合</div>
 <div class="panel"><div class="section-label"><span>最終結果</span></div>
 <div class="sum-grid">${sum.map((p, i) => `<div class="sum-card" style="--pc:${PC[i]}"><div class="n">${esc(p.name)}</div><div class="t ${cls(p.total)}">${fmtPt1(p.total)}</div><div class="s">平均 ${p.games ? p.avgRank.toFixed(2) : '-'}位 ・ ${p.rankCounts.join('-')}</div></div>`).join('')}</div></div>
+<div class="panel"><div class="section-label"><span>ポイントの精算</span><button class="mini-btn" onclick="copySettlement('arc','${s.id}')">コピー</button></div>${settlementHtml(s)}</div>
 <div class="panel"><div class="section-label"><span>ポイント推移</span></div>${chartSvg(cumulativeSeries(s), names)}</div>
 <div class="panel"><div class="section-label"><span>試合ごとの結果</span></div>
 <div class="tbl-wrap"><table class="tbl"><thead><tr><th>#</th>${names.map(n => `<th>${esc(n)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody>

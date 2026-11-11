@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' wss://broker.emqx.io:8084 wss://broker.hivemq.com:8884; manifest-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>麻雀精算 みんなで同期</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#07080a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="麻雀精算">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="online.css">
+</head>
+<body>
+<div class="app">
+
+<div id="banner" role="status"></div>
+
+<!-- ===== メニュー ===== -->
+<section id="s-menu" class="screen active">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">麻</div>
+      <div style="min-width:0"><div class="brand-title">みんなで同期</div><div class="brand-sub">全員のスマホに、同じ卓を映す</div></div>
+    </div>
+  </header>
+
+  <div class="panel">
+    <div class="section-label"><span>あなたの名前</span></div>
+    <input id="name" class="txt" type="text" maxlength="10" placeholder="例: タロウ" autocomplete="off" aria-label="あなたの名前">
+    <p class="hint">参加者の一覧に出る名前です（麻雀の席の名前とは別です）。</p>
+  </div>
+
+  <div class="panel">
+    <div class="section-label"><span>卓をつくる（ホスト）</span></div>
+    <label class="lbl" for="host-rule">ルール</label>
+    <select id="host-rule" class="set-select"></select>
+    <button id="b-host" class="btn gold">部屋をつくる</button>
+    <p class="hint" id="host-note">点数を入力するのはホストです（入力を許可した人も入力できます）。ホストのスマホが止まると、同期も止まります。</p>
+    <button id="b-import" class="link">麻雀精算アプリの「いまの対局」を引き継ぐ</button>
+  </div>
+
+  <div class="panel">
+    <div class="section-label"><span>卓に参加する</span></div>
+    <button id="b-join" class="btn">QRを読み取る</button>
+    <p class="hint" style="margin-top:12px">カメラが使えないときは、ホストの画面に出る「参加コード」を貼り付けてください。</p>
+    <textarea id="paste" class="carry-text" rows="2" placeholder="MJ1~…" aria-label="参加コード"></textarea>
+    <button id="b-paste" class="btn" style="margin-top:8px">コードで参加する</button>
+    <p class="draft-msg warn" id="menu-err"></p>
+  </div>
+
+  <div class="panel">
+    <div class="section-label"><span>安全について</span></div>
+    <p class="hint" style="margin-top:0">通信は暗号化されます（ホストと参加者の二人だけの鍵）。中継サーバーには暗号文しか流れません。ただし、参加QRを知っている人は参加できるので、全員そろったら「受付を締める」を押してください。</p>
+  </div>
+
+  <a class="link" href="index.html">‹ 麻雀精算にもどる</a>
+</section>
+
+<!-- ===== QR読み取り ===== -->
+<section id="s-scan" class="screen">
+  <h2 class="page-title">QRを読み取る</h2>
+  <div class="panel">
+    <video id="sc-video" class="scan-video" playsinline muted></video>
+    <p class="draft-msg" id="sc-msg">ホストの画面のQRを、枠に写してください</p>
+    <button id="sc-back" class="btn">やめる</button>
+  </div>
+</section>
+
+<!-- ===== 卓 ===== -->
+<section id="s-table" class="screen">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">麻</div>
+      <div style="min-width:0"><div class="brand-title">麻雀精算</div><div class="brand-sub" id="t-sub"></div></div>
+    </div>
+    <button class="chip" id="t-chip"></button>
+  </header>
+
+  <div class="panel">
+    <div class="section-label"><span>総合順位</span><button class="mini-btn" id="b-members"></button></div>
+    <div class="board" id="board"></div>
+  </div>
+
+  <div class="panel" id="input-panel">
+    <div class="section-label"><span id="input-title">第1試合</span><span class="sub-note">終局時の持ち点</span></div>
+    <div class="e-rows" id="entry-rows"></div>
+    <div class="draft-msg" id="draft-msg"></div>
+    <div class="keypad" id="keypad"></div>
+    <button class="btn gold" id="record-btn" disabled>記録する</button>
+    <button class="link" id="cancel-edit">修正をやめる</button>
+  </div>
+
+  <div class="panel" id="viewer-note">
+    <p class="hint" style="margin:0">この卓の点数は、ホストが入力します。入力を許可されると、ここに入力欄が出ます。</p>
+  </div>
+
+  <div class="panel">
+    <div class="section-label"><span>ポイント推移</span></div>
+    <div id="chart"></div>
+  </div>
+
+  <div class="panel">
+    <div class="section-label"><span>ポイントの精算</span><button class="mini-btn" id="b-copy">コピー</button></div>
+    <div id="settle"></div>
+  </div>
+
+  <div class="panel">
+    <div class="section-label"><span>これまでの試合</span><span class="sub-note" id="log-count"></span></div>
+    <div class="log" id="log"></div>
+    <p class="hint" id="log-hint">試合をタップすると、詳しい内容を見られます（ホストは修正・削除もできます）。</p>
+  </div>
+
+  <div class="actions">
+    <button class="btn gold" id="b-people">参加者・QR</button>
+    <button class="btn" id="b-save">この対局を履歴に保存</button>
+    <button class="btn" id="b-new">新しい対局を始める</button>
+    <button class="link" id="b-quit">退出する</button>
+  </div>
+</section>
+
+</div>
+
+<div id="backdrop"><div id="sheet" role="dialog" aria-modal="true"></div></div>
+<div id="toast" role="status"></div>
+
+<script src="lib/qrcode.js"></script>
+<script src="lib/jsQR.js"></script>
+<script src="mqtt.js"></script>
+<script src="room.js"></script>
+<script src="logic.js"></script>
+<script src="sync.js"></script>
+<script src="online.js"></script>
+</body>
+</html>

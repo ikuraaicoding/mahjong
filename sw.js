@@ -1,6 +1,10 @@
 // 更新を配るときは CACHE_VERSION を上げる
-const CACHE_VERSION = 'mj-v7';
-const FILES = ['./', './index.html', './logic.js', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE_VERSION = 'mj-v8';
+const FILES = [
+  './', './index.html', './logic.js', './manifest.json', './icon-192.png', './icon-512.png',
+  './online.html', './online.js', './online.css', './sync.js', './room.js', './mqtt.js',
+  './lib/qrcode.js', './lib/jsQR.js'
+];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE_VERSION).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));

@@ -1,0 +1,8 @@
+﻿同梱ライブラリ(公開用フォルダに入れた外部コード)
+- jsQR 1.4.0 (Apache-2.0)  https://www.npmjs.com/package/jsqr  ← dist/jsQR.js
+- qrcode-generator 1.4.4 (MIT)  https://www.npmjs.com/package/qrcode-generator ← qrcode.js
+確認方法: npm レジストリの公式 integrity (sha512) と、ダウンロードした tarball のハッシュが一致することを確認し、そこから取り出したファイルをそのまま同梱。
+SHA-256(同梱ファイル):
+BC40C8A15196236B2314DB0856F72CA0B49980CD5413B8C852A7349F5FEE0859  jsQR.js
+18AE399F81182BC9DE916E9C77B195DF20CC58D6F2D55A62B085A299F1BF1780  qrcode.js
+更新するときは、この手順をやり直すこと。

@@ -344,6 +344,12 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
   </div>
 
   <div class="panel">
+    <div class="section-label"><span>みんなで同期</span></div>
+    <a class="btn" href="online.html" style="text-decoration:none">全員のスマホに同じ卓を映す</a>
+    <p class="hint">ホストが点数を入力すると、参加した人のスマホにも順位ボードや精算が出ます（通信は暗号化されます）。</p>
+  </div>
+
+  <div class="panel">
     <div class="section-label"><span>バックアップ</span></div>
     <div class="btn-row">
       <button class="btn" onclick="exportData()">書き出し</button>
@@ -387,6 +393,7 @@ let state = { current: newSession(), archives: [], rule: cloneRule(MJ_PRESETS[0]
 let input = { vals: ['', '', '', ''], active: 0, editingId: null };
 let ui = { screen: 'play', detailId: null };
 let saveWarned = false;
+let lastRaw = null;   // 最後に読み書きした保存データ（オンライン画面が履歴を足したら、戻ってきたときに読み直す）
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -418,6 +425,7 @@ function save() {
   try {
     localStorage.setItem(KEY_MAIN, JSON.stringify({ v: 3, current: state.current, archives: state.archives, rule: state.rule, carry: state.carry }));
     localStorage.setItem(KEY_INPUT, JSON.stringify(input));
+    lastRaw = localStorage.getItem(KEY_MAIN);
   } catch (e) {
     console.log('Save failed:', e);
     if (!saveWarned) { saveWarned = true; toast('⚠️ この端末に保存できませんでした。書き出しでバックアップしてください'); }
@@ -464,6 +472,7 @@ function load() {
       input.editingId = (inp.editingId && state.current.games.some(g => g.id === inp.editingId)) ? inp.editingId : null;
     }
   } catch (e) { console.log('Load failed:', e); }
+  try { lastRaw = localStorage.getItem(KEY_MAIN); } catch (e) { lastRaw = null; }
 }
 
 /* =========================================
@@ -1098,6 +1107,16 @@ window.addEventListener('DOMContentLoaded', () => {
   renderAll();
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* 失敗しても問題なし */ }
 });
+
+// オンライン画面で履歴が増えていたら、戻ってきたときに読み直す（古い状態で上書きしないため）
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  let raw = null;
+  try { raw = localStorage.getItem(KEY_MAIN); } catch (e) { return; }
+  if (raw === lastRaw) return;
+  load(); renderAll(); showScreen(ui.screen === 'detail' ? 'history' : ui.screen);
+});
+window.addEventListener('pageshow', e => { if (e.persisted) document.dispatchEvent(new Event('visibilitychange')); });
 </script>
 </body>
 </html>

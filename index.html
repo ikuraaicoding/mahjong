@@ -207,6 +207,33 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .tr-amt { font: 700 18px var(--sans); font-variant-numeric: tabular-nums; color: var(--gold-hi); white-space: nowrap; }
 .mem-input { width: 100%; padding: 11px 12px; font-size: 16px; margin-bottom: 8px; border-left: 4px solid var(--pc); }
 
+/* ----- 席決め ----- */
+.sk-turn { min-height: 46px; text-align: center; font: 600 15px var(--serif); letter-spacing: .06em; margin-bottom: 12px; line-height: 1.5; }
+.sk-turn b { color: var(--pc, var(--gold-hi)); font-size: 18px; }
+.sk-turn small { display: block; font: 500 11.5px var(--sans); color: var(--sub); letter-spacing: .04em; }
+.sk-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 0 6px 14px; perspective: 700px; }
+.sk-tile { position: relative; aspect-ratio: 3 / 4; padding: 0; }
+.sk-in { position: absolute; inset: 0; transform-style: preserve-3d; transition: transform .55s cubic-bezier(.3,1.4,.5,1); }
+.sk-tile.open .sk-in { transform: rotateY(180deg); }
+.sk-face, .sk-back { position: absolute; inset: 0; border-radius: 9px; backface-visibility: hidden; -webkit-backface-visibility: hidden; display: grid; place-items: center; }
+.sk-back { background: linear-gradient(160deg, #2c7a55, #154a33); border: 1px solid #0b2c1e; box-shadow: 0 4px 0 #d9cfb4, 0 5px 0 #0a0c10, 0 8px 14px rgba(0,0,0,.5); }
+.sk-back::after { content: ""; width: 46%; height: 46%; border-radius: 50%; border: 1px solid rgba(214,178,98,.45); }
+.sk-tile:not(.open):active .sk-in { transform: translateY(2px); }
+.sk-face { transform: rotateY(180deg); background: linear-gradient(180deg, #fbf7ec, #e6dcc3); border: 1px solid #b9ad8d; box-shadow: 0 4px 0 #2c7a55, 0 5px 0 #0a0c10, 0 8px 14px rgba(0,0,0,.5); font: 700 34px var(--serif); color: #1b1b1b; }
+.sk-face.ton { color: #b3262e; }
+.sk-who { position: absolute; left: 50%; bottom: -24px; transform: translateX(-50%); white-space: nowrap; max-width: 110%; overflow: hidden; text-overflow: ellipsis; font: 600 11.5px var(--serif); color: var(--pc); opacity: 0; transition: opacity .3s .35s; }
+.sk-tile.open .sk-who { opacity: 1; }
+.sk-result { margin-top: 30px; }
+.sk-table { position: relative; width: 230px; height: 190px; margin: 0 auto 6px; }
+.sk-table::before { content: ""; position: absolute; left: 58px; right: 58px; top: 44px; bottom: 44px; border-radius: 10px; background: radial-gradient(circle, #1f5c42, #12382a); border: 1px solid var(--line-strong); }
+.sk-seat { position: absolute; display: flex; flex-direction: column; align-items: center; gap: 1px; width: 92px; text-align: center; animation: fade .4s ease both; }
+.sk-seat i { font: 700 15px var(--serif); font-style: normal; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 6px; background: linear-gradient(180deg,#3a3f48,#23272e); }
+.sk-seat.oya i { background: var(--gold-grad); color: #1a1405; }
+.sk-seat span { font: 600 13px var(--serif); max-width: 92px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--pc); }
+.sk-seat small { font-size: 10px; color: var(--gold-hi); letter-spacing: .08em; }
+.sk-s0 { left: 69px; bottom: -8px; } .sk-s1 { right: -10px; top: 62px; } .sk-s2 { left: 69px; top: 0; } .sk-s3 { left: -10px; top: 62px; }
+.sk-s2 { flex-direction: column-reverse; }
+
 /* ----- ナビ・シート・トースト ----- */
 .tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; display: flex; justify-content: center; background: linear-gradient(180deg, rgba(10,12,16,.92), rgba(5,6,8,.98)); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-top: 1px solid var(--line-strong); padding-bottom: env(safe-area-inset-bottom); }
 .tabbar-in { display: flex; width: 100%; max-width: 460px; }
@@ -243,7 +270,7 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
   </header>
 
   <div class="panel">
-    <div class="section-label"><span>総合順位</span><button class="mini-btn" onclick="openMembers()">メンバー</button></div>
+    <div class="section-label"><span>総合順位</span><span style="display:flex;gap:6px"><button class="mini-btn" onclick="openSeatGame()">席決め</button><button class="mini-btn" onclick="openMembers()">メンバー</button></span></div>
     <div class="board" id="board"></div>
   </div>
 
@@ -820,6 +847,96 @@ function setName(i, v) {
   $(`bname-${i}`).textContent = nm(i);
   renderEntry(); renderChartPanel(); renderLog(); refreshKnownNames();
   if (ui.screen === 'settings') renderSettings();
+}
+
+/* =========================================
+   席決め: 伏せた風牌を1人ずつめくる
+========================================= */
+const WINDS = ['東', '南', '西', '北'];
+let seat = null;   // { winds: 牌の並び, owner: 牌ごとにめくった人, turn: 次にめくる人 }
+
+function randInt(n) {
+  try { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; } catch (e) { return Math.floor(Math.random() * n); }
+}
+function shuffled(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = randInt(i + 1); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+
+function openSeatGame() {
+  seat = { winds: shuffled(WINDS), owner: [null, null, null, null], turn: 0 };
+  const tiles = [0, 1, 2, 3].map(t => `
+<button class="sk-tile" id="sk-tile-${t}" onclick="pickSeatTile(${t})" aria-label="${t + 1}枚目の牌">
+  <div class="sk-in"><div class="sk-back"></div><div class="sk-face"></div></div>
+  <div class="sk-who"></div>
+</button>`).join('');
+  openSheet(`<h3>席決め</h3>
+<div class="sk-turn" id="sk-turn"></div>
+<div class="sk-tiles">${tiles}</div>
+<div id="sk-result"></div>
+<div class="sheet-actions" id="sk-actions"><button class="link" onclick="closeSheet()">やめる</button></div>`);
+  renderSeatTurn();
+}
+
+function renderSeatTurn() {
+  const el = $('sk-turn');
+  if (seat.turn >= 4) { el.style.removeProperty('--pc'); el.innerHTML = '席が決まりました<small>東の人が起家（最初の親）です</small>'; return; }
+  el.style.setProperty('--pc', PC[seat.turn]);
+  el.innerHTML = `<b>${esc(nm(seat.turn))}</b> さんの番<small>伏せてある牌を1枚えらんでください</small>`;
+}
+
+function pickSeatTile(t) {
+  if (!seat || seat.turn >= 4 || seat.owner[t] !== null) return;
+  const p = seat.turn;
+  seat.owner[t] = p; seat.turn++;
+  const tile = $(`sk-tile-${t}`), w = seat.winds[t];
+  const face = tile.querySelector('.sk-face');
+  face.textContent = w; face.classList.toggle('ton', w === '東');
+  const who = tile.querySelector('.sk-who');
+  who.textContent = nm(p); who.style.setProperty('--pc', PC[p]);
+  tile.classList.add('open'); tile.setAttribute('aria-label', `${nm(p)}: ${w}`);
+  if (navigator.vibrate) { try { navigator.vibrate(12); } catch (e) { /* 対応していない端末 */ } }
+  // 3人めくったら、最後の1枚は残りの人のもの
+  const g = seat;
+  if (seat.turn === 3) setTimeout(() => { if (seat === g) pickSeatTile(seat.owner.indexOf(null)); }, 650);
+  renderSeatTurn();
+  if (seat.turn >= 4) setTimeout(() => { if (seat === g) renderSeatResult(); }, 700);
+}
+
+// 風ごとの人（東・南・西・北の順）
+function seatOrder() { return WINDS.map(w => seat.owner[seat.winds.indexOf(w)]); }
+
+function renderSeatResult() {
+  if (!seat || seat.turn < 4 || !$('sk-result')) return;
+  const order = seatOrder();
+  // 卓の図: 自分（東）が手前、右が南（下家）、向かいが西（対面）、左が北（上家）
+  const seats = order.map((p, k) => `
+<div class="sk-seat sk-s${k}${k === 0 ? ' oya' : ''}" style="--pc:${PC[p]};animation-delay:${k * 0.12}s">
+  <i>${WINDS[k]}</i><span>${esc(nm(p))}</span>${k === 0 ? '<small>起家</small>' : ''}
+</div>`).join('');
+  $('sk-result').innerHTML = `<div class="sk-result"><div class="sk-table">${seats}</div></div>`;
+  const canApply = state.current.games.length === 0;
+  const already = order.every((p, k) => p === k);
+  $('sk-actions').innerHTML = (canApply && !already
+      ? `<button class="btn gold" onclick="applySeatOrder()">この席順でメンバーを並べる</button>`
+      : `<button class="btn gold" onclick="closeSheet()">とじる</button>`)
+    + `<button class="btn" onclick="openSeatGame()">もう一度</button>`
+    + (canApply && !already ? `<button class="link" onclick="closeSheet()">並べ替えずにとじる</button>` : '')
+    + (!canApply ? `<p class="hint" style="text-align:center">試合を記録したあとはメンバーの並びを変えられないので、結果の表示だけです。</p>` : '');
+}
+
+// メンバーの並び（P1〜P4）を東・南・西・北の順に入れ替える。試合を記録する前だけ
+function applySeatOrder() {
+  if (!seat || seat.turn < 4 || state.current.games.length) return;
+  const order = seatOrder();
+  state.current.names = order.map(p => state.current.names[p]);
+  input.vals = order.map(p => input.vals[p]);
+  input.active = 0; input.editingId = null;
+  save(); closeSheet();
+  [0, 1, 2, 3].forEach(i => { $(`bname-${i}`).textContent = nm(i); });
+  renderPlay(false); refreshKnownNames();
+  toast(`起家は ${nm(0)} さんです`);
 }
 
 /* =========================================

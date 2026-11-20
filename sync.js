@@ -168,31 +168,10 @@ function mergeIntoMainStorage(raw, session) {
   return { ok: true, added: true, json: JSON.stringify({ v: 3, current: cur, archives: arch, rule, carry }) };
 }
 
-/* ---------- 席決め（伏せた風牌を1人ずつめくる） ----------
-   ホストだけが牌の中身を知っている。参加者に送るのは、めくられた牌だけ（伏せた牌は覗けない）。
-   seat = { id, winds[4]: 牌ごとの風, owner[4]: 牌ごとにめくった人(-1 = まだ), st: 'play' | 'end' | 'applied', perm } */
-const SEAT_WINDS = ['東', '南', '西', '北'];
-
-function seatNew(randInt) {
-  const w = SEAT_WINDS.slice();
-  for (let i = w.length - 1; i > 0; i--) { const j = randInt(i + 1); const t = w[i]; w[i] = w[j]; w[j] = t; }
-  return { id: newId(), winds: w, owner: [-1, -1, -1, -1], st: 'play', perm: null };
-}
-function seatTurn(s) { return s.owner.filter(o => o >= 0).length; }
-function seatDone(s) { return seatTurn(s) >= 4; }
-
-// 牌 k を、いまの番の人がめくる。めくれたら true
-function seatPick(s, k) {
-  if (!s || s.st !== 'play' || !Number.isInteger(k) || k < 0 || k > 3 || s.owner[k] >= 0 || seatDone(s)) return false;
-  s.owner[k] = seatTurn(s);
-  return true;
-}
-// 東・南・西・北の順に、その風をひいた人（メンバーの番号）
-function seatOrderOf(s) { return SEAT_WINDS.map(w => s.owner[s.winds.indexOf(w)]); }
-
-// 参加者に送る形（伏せた牌の中身は '' にする）
+/* ---------- 席決め（オンライン同期）。決まりごとは logic.js の seat〜 ----------
+   ホストだけが牌の中身を知っている。参加者に送るのは、表になった牌だけ（伏せた牌は覗けない）。 */
 function seatToMsg(s) {
-  const m = { t: 'seat', id: s.id, w: s.winds.map((w, k) => (s.owner[k] >= 0 ? w : '')), o: s.owner.slice(), st: s.st };
+  const m = { t: 'seat', id: s.id, w: s.tiles.map((t, k) => (seatRevealed(s.owner, k) ? t : '')), o: s.owner.slice(), st: s.st };
   if (s.perm) m.perm = s.perm.slice();
   return m;
 }
@@ -206,26 +185,26 @@ function parseSeat(o) {
   if (!o || typeof o !== 'object' || o.t !== 'seat') return null;
   if (typeof o.id !== 'string' || !/^[A-Za-z0-9_-]{1,40}$/.test(o.id)) return null;
   if (['play', 'end', 'applied'].indexOf(o.st) < 0) return null;
-  if (!Array.isArray(o.w) || o.w.length !== 4 || !Array.isArray(o.o) || o.o.length !== 4) return null;
-  const opened = [];
-  for (let k = 0; k < 4; k++) {
-    const w = o.w[k], p = o.o[k];
+  if (!Array.isArray(o.w) || !Array.isArray(o.o) || o.w.length !== o.o.length || (o.w.length !== 4 && o.w.length !== 5)) return null;
+  const n = o.w.length, allowed = n === 5 ? SEAT_WINDS.concat([SEAT_HAKU]) : SEAT_WINDS;
+  const owners = [];
+  for (let k = 0; k < n; k++) {
+    const p = o.o[k];
     if (!Number.isInteger(p) || p < -1 || p > 3) return null;
-    if ((p >= 0) !== (w !== '')) return null;
-    if (w !== '' && SEAT_WINDS.indexOf(w) < 0) return null;
-    if (p >= 0) opened.push({ w, p });
+    if (p >= 0) owners.push(p);
   }
-  if (new Set(opened.map(x => x.w)).size !== opened.length) return null;
-  const ps = opened.map(x => x.p).sort();
-  if (ps.some((p, i) => p !== i)) return null;              // めくった人は P1 から順番
+  owners.sort();
+  if (owners.some((p, i) => p !== i)) return null;              // めくった人は P1 から順番
+  const shown = [];
+  for (let k = 0; k < n; k++) {
+    const w = o.w[k];
+    if ((w !== '') !== seatRevealed(o.o, k)) return null;
+    if (w !== '') { if (allowed.indexOf(w) < 0) return null; shown.push(w); }
+  }
+  if (new Set(shown).size !== shown.length) return null;
   let perm = null;
   if (o.perm !== undefined) { if (o.st !== 'applied' || !validPerm(o.perm)) return null; perm = o.perm.slice(); }
-  if (o.st === 'applied' && (!perm || opened.length !== 4)) return null;
-  return { id: o.id, w: o.w.slice(), owner: o.o.slice(), st: o.st, perm };
-}
-
-// 参加者の画面用: 受け取った状態から、東・南・西・北の順の人（そろっていなければ null）
-function seatOrderFromMsg(m) {
-  if (m.owner.some(p => p < 0)) return null;
-  return SEAT_WINDS.map(w => m.owner[m.w.indexOf(w)]);
+  if (o.st === 'applied' && (!perm || owners.length !== 4)) return null;
+  if (owners.length === 4 && !seatResult(o.w, o.o)) return null;
+  return { id: o.id, haku: n === 5, w: o.w.slice(), owner: o.o.slice(), st: o.st, perm };
 }

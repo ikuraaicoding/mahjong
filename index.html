@@ -233,6 +233,18 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .sk-seat small { font-size: 10px; color: var(--gold-hi); letter-spacing: .08em; }
 .sk-s0 { left: 69px; bottom: -8px; } .sk-s1 { right: -10px; top: 62px; } .sk-s2 { left: 69px; top: 0; } .sk-s3 { left: -10px; top: 62px; }
 .sk-s2 { flex-direction: column-reverse; }
+.sk-mode { display: flex; justify-content: center; gap: 0; margin: -2px auto 8px; width: max-content; border: 1px solid var(--line-strong); border-radius: 999px; overflow: hidden; }
+.sk-mode button { padding: 6px 18px; font: 600 12.5px var(--serif); letter-spacing: .1em; color: var(--sub); }
+.sk-mode button.on { background: var(--gold-grad); color: #1a1405; }
+.sk-rule { font-size: 11.5px; color: var(--sub); line-height: 1.6; text-align: center; margin: 0 4px 12px; }
+.sk-tiles.n5 { grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 0 0 14px; }
+.sk-tiles.n5 .sk-face { font-size: 28px; }
+.sk-face.haku::after { content: ""; position: absolute; inset: 20% 22%; border: 2px solid #5a8fc8; border-radius: 4px; }
+.sk-who.left { color: var(--gold-hi); }
+.sk-center { position: absolute; left: 58px; right: 58px; top: 44px; bottom: 44px; z-index: 1; display: grid; place-items: center; text-align: center; font: 500 10px/1.45 var(--sans); color: rgba(239,232,216,.75); }
+.sk-center b { font: 700 11px var(--serif); color: var(--gold-hi); }
+.sk-note { font-size: 12.5px; color: var(--ivory); line-height: 1.7; text-align: center; margin: 4px 4px 0; }
+.sk-note b { color: var(--gold-hi); }
 
 /* ----- ナビ・シート・トースト ----- */
 .tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; display: flex; justify-content: center; background: linear-gradient(180deg, rgba(10,12,16,.92), rgba(5,6,8,.98)); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-top: 1px solid var(--line-strong); padding-bottom: env(safe-area-inset-bottom); }
@@ -850,74 +862,95 @@ function setName(i, v) {
 }
 
 /* =========================================
-   席決め: 伏せた風牌を1人ずつめくる
+   席決め: 伏せた牌を1人ずつめくる（決まりごとは logic.js の seat〜）
 ========================================= */
-const WINDS = ['東', '南', '西', '北'];
-let seat = null;   // { winds: 牌の並び, owner: 牌ごとにめくった人, turn: 次にめくる人 }
+const KEY_SEAT_HAKU = 'mj_seat_haku';
+let seat = null;
+let seatResultShown = false;
 
 function randInt(n) {
   try { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; } catch (e) { return Math.floor(Math.random() * n); }
 }
-function shuffled(arr) {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) { const j = randInt(i + 1); [a[i], a[j]] = [a[j], a[i]]; }
-  return a;
+function seatHakuPref() { try { return localStorage.getItem(KEY_SEAT_HAKU) !== '0'; } catch (e) { return true; } }
+function setSeatMode(haku) {
+  try { localStorage.setItem(KEY_SEAT_HAKU, haku ? '1' : '0'); } catch (e) { /* 保存できなくても動く */ }
+  openSeatGame();
 }
 
 function openSeatGame() {
-  seat = { winds: shuffled(WINDS), owner: [null, null, null, null], turn: 0 };
-  const tiles = [0, 1, 2, 3].map(t => `
+  seat = seatNew(randInt, seatHakuPref()); seatResultShown = false;
+  const n = seat.tiles.length;
+  const tiles = seat.tiles.map((_, t) => `
 <button class="sk-tile" id="sk-tile-${t}" onclick="pickSeatTile(${t})" aria-label="${t + 1}枚目の牌">
   <div class="sk-in"><div class="sk-back"></div><div class="sk-face"></div></div>
   <div class="sk-who"></div>
 </button>`).join('');
   openSheet(`<h3>席決め</h3>
+<div class="sk-mode" role="group" aria-label="ルール">
+  <button class="${seat.haku ? 'on' : ''}" onclick="setSeatMode(true)">白あり</button><button class="${seat.haku ? '' : 'on'}" onclick="setSeatMode(false)">白なし</button>
+</div>
+<p class="sk-rule">${seat.haku ? '東・南・西・北・白の5枚から1枚ずつ。白をひいた人のいる場所が卓の東になり、白の人は余った風をもらいます（白が余ったら、東の人のいる場所が卓の東）。' : '東・南・西・北の4枚から1枚ずつ。ひいた風がその人の席です。'}</p>
 <div class="sk-turn" id="sk-turn"></div>
-<div class="sk-tiles">${tiles}</div>
+<div class="sk-tiles n${n}" id="sk-tiles">${tiles}</div>
 <div id="sk-result"></div>
 <div class="sheet-actions" id="sk-actions"><button class="link" onclick="closeSheet()">やめる</button></div>`);
   renderSeatTurn();
 }
 
 function renderSeatTurn() {
-  const el = $('sk-turn');
-  if (seat.turn >= 4) { el.style.removeProperty('--pc'); el.innerHTML = '席が決まりました<small>東の人が起家（最初の親）です</small>'; return; }
-  el.style.setProperty('--pc', PC[seat.turn]);
-  el.innerHTML = `<b>${esc(nm(seat.turn))}</b> さんの番<small>伏せてある牌を1枚えらんでください</small>`;
+  const el = $('sk-turn'), t = seatTurn(seat);
+  document.querySelector('.sk-mode').style.display = t > 0 ? 'none' : '';
+  if (t >= 4) { el.style.removeProperty('--pc'); el.innerHTML = '席が決まりました<small>東の人が起家（最初の親）です</small>'; return; }
+  el.style.setProperty('--pc', PC[t]);
+  el.innerHTML = `<b>${esc(nm(t))}</b> さんの番<small>伏せてある牌を1枚えらんでください</small>`;
 }
 
-function pickSeatTile(t) {
-  if (!seat || seat.turn >= 4 || seat.owner[t] !== null) return;
-  const p = seat.turn;
-  seat.owner[t] = p; seat.turn++;
-  const tile = $(`sk-tile-${t}`), w = seat.winds[t];
-  const face = tile.querySelector('.sk-face');
-  face.textContent = w; face.classList.toggle('ton', w === '東');
+function flipSeatTile(k, label, pc) {
+  const tile = $(`sk-tile-${k}`); if (!tile || tile.classList.contains('open')) return;
+  const w = seat.tiles[k], face = tile.querySelector('.sk-face');
+  face.textContent = w === SEAT_HAKU ? '' : w;
+  face.classList.toggle('ton', w === '東'); face.classList.toggle('haku', w === SEAT_HAKU);
   const who = tile.querySelector('.sk-who');
-  who.textContent = nm(p); who.style.setProperty('--pc', PC[p]);
-  tile.classList.add('open'); tile.setAttribute('aria-label', `${nm(p)}: ${w}`);
-  if (navigator.vibrate) { try { navigator.vibrate(12); } catch (e) { /* 対応していない端末 */ } }
-  // 3人めくったら、最後の1枚は残りの人のもの
-  const g = seat;
-  if (seat.turn === 3) setTimeout(() => { if (seat === g) pickSeatTile(seat.owner.indexOf(null)); }, 650);
-  renderSeatTurn();
-  if (seat.turn >= 4) setTimeout(() => { if (seat === g) renderSeatResult(); }, 700);
+  who.textContent = label; if (pc) who.style.setProperty('--pc', pc); else who.classList.add('left');
+  tile.classList.add('open'); tile.setAttribute('aria-label', `${label}: ${w}`);
 }
 
-// 風ごとの人（東・南・西・北の順）
-function seatOrder() { return WINDS.map(w => seat.owner[seat.winds.indexOf(w)]); }
+function pickSeatTile(k) {
+  if (!seat || !seatPick(seat, k)) return;
+  const p = seat.owner[k], g = seat;
+  flipSeatTile(k, nm(p), PC[p]);
+  if (navigator.vibrate) { try { navigator.vibrate(12); } catch (e) { /* 対応していない端末 */ } }
+  // 白なしで3人めくったら、最後の1枚は残りの人のもの
+  const auto = seatAutoTile(seat);
+  if (auto >= 0) setTimeout(() => { if (seat === g) pickSeatTile(auto); }, 650);
+  renderSeatTurn();
+  if (seatDone(seat)) {
+    const li = seat.owner.indexOf(-1);
+    if (li >= 0) setTimeout(() => { if (seat === g) flipSeatTile(li, '余り', null); }, 650);
+    setTimeout(() => { if (seat === g) renderSeatResult(); }, li >= 0 ? 1300 : 700);
+  }
+}
+
+// 結果の説明文（白ありのとき、どこが卓の東か）
+function seatNoteHtml(r, haku, name) {
+  if (!haku) return '';
+  if (r.haku >= 0) return `白をひいた <b>${esc(name(r.haku))}</b> さんがいま座っている場所が、卓の「東」です。${esc(name(r.haku))} さんは余った「${esc(r.left)}」の席に移ります。`;
+  return `白が余ったので、東をひいた <b>${esc(name(r.ref))}</b> さんのいる場所が、卓の「東」です。`;
+}
 
 function renderSeatResult() {
-  if (!seat || seat.turn < 4 || !$('sk-result')) return;
-  const order = seatOrder();
-  // 卓の図: 自分（東）が手前、右が南（下家）、向かいが西（対面）、左が北（上家）
-  const seats = order.map((p, k) => `
+  if (!seat || !seatDone(seat) || !$('sk-result')) return;
+  const r = seatResult(seat.tiles, seat.owner); if (!r) return;
+  // 卓の図: 東が手前、右が南（下家）、向かいが西（対面）、左が北（上家）
+  const seats = r.order.map((p, k) => `
 <div class="sk-seat sk-s${k}${k === 0 ? ' oya' : ''}" style="--pc:${PC[p]};animation-delay:${k * 0.12}s">
-  <i>${WINDS[k]}</i><span>${esc(nm(p))}</span>${k === 0 ? '<small>起家</small>' : ''}
+  <i>${SEAT_WINDS[k]}</i><span>${esc(nm(p))}</span>${k === 0 ? '<small>起家</small>' : ''}
 </div>`).join('');
-  $('sk-result').innerHTML = `<div class="sk-result"><div class="sk-table">${seats}</div></div>`;
+  const center = seat.haku ? `<div class="sk-center"><div>手前が卓の東<br>（<b>${esc(nm(r.ref))}</b> さんの<br>いまの場所）</div></div>` : '';
+  const note = seatNoteHtml(r, seat.haku, nm);
+  $('sk-result').innerHTML = `<div class="sk-result"><div class="sk-table">${center}${seats}</div>${note ? `<p class="sk-note">${note}</p>` : ''}</div>`;
   const canApply = state.current.games.length === 0;
-  const already = order.every((p, k) => p === k);
+  const already = r.order.every((p, k) => p === k);
   $('sk-actions').innerHTML = (canApply && !already
       ? `<button class="btn gold" onclick="applySeatOrder()">この席順でメンバーを並べる</button>`
       : `<button class="btn gold" onclick="closeSheet()">とじる</button>`)
@@ -928,8 +961,9 @@ function renderSeatResult() {
 
 // メンバーの並び（P1〜P4）を東・南・西・北の順に入れ替える。試合を記録する前だけ
 function applySeatOrder() {
-  if (!seat || seat.turn < 4 || state.current.games.length) return;
-  const order = seatOrder();
+  if (!seat || !seatDone(seat) || state.current.games.length) return;
+  const r = seatResult(seat.tiles, seat.owner); if (!r) return;
+  const order = r.order;
   state.current.names = order.map(p => state.current.names[p]);
   input.vals = order.map(p => input.vals[p]);
   input.active = 0; input.editingId = null;

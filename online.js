@@ -473,7 +473,7 @@ function afterChange(animate) { saveHost(); renderAll(animate); broadcastSnap(tr
 function hostMsg(id, o) {
   if (!o || typeof o.t !== 'string') return;
   if (o.t === 'req') { sendSnapTo(id); if (seatG && seatG.st === 'play') room.sendTo(id, seatToMsg(seatG), true); return; }
-  if (o.t === 'seatpick') { if (seatG && o.id === seatG.id && Number.isInteger(o.k) && seatTurn(seatG) < 3) hostSeatPick(o.k); return; }
+  if (o.t === 'seatpick') { if (seatG && o.id === seatG.id && Number.isInteger(o.k) && seatAutoTile(seatG) < 0) hostSeatPick(o.k); return; }
   if (o.t !== 'rec') return;
   const p = room.peers.get(id); if (!p) return;
   const no = why => room.sendTo(id, { t: 'no', op: typeof o.op === 'string' ? o.op.slice(0, 40) : '', why }, true);
@@ -685,12 +685,18 @@ function deleteGame(id) {
 }
 
 /* =====================================================================
-   席決め（伏せた風牌を1人ずつめくる。全員の画面で同じ牌がめくれる）
-   ホストが牌の中身を持ち、めくられた牌だけを配る。参加者は「この牌をめくる」とお願いするだけ。
+   席決め（伏せた牌を1人ずつめくる。全員の画面で同じ牌がめくれる。決まりごとは logic.js の seat〜）
+   ホストが牌の中身を持ち、表になった牌だけを配る。参加者は「この牌をめくる」とお願いするだけ。
 ===================================================================== */
 let seatG = null;      // ホスト: 牌の中身まで入った本体
 let seatView = null;   // 画面に出している状態（parseSeat の形）。ホストも参加者も、これで描く
 let seatShown = null;  // 結果の卓の図を出した席決めの id
+const KEY_SEAT_HAKU = 'mj_seat_haku';
+function seatHakuPref() { try { return localStorage.getItem(KEY_SEAT_HAKU) !== '0'; } catch (e) { return true; } }
+function hostSetSeatMode(haku) {
+  try { localStorage.setItem(KEY_SEAT_HAKU, haku ? '1' : '0'); } catch (e) { /* 保存できなくても動く */ }
+  hostStartSeat();
+}
 
 function randInt(n) {
   try { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; } catch (e) { return Math.floor(Math.random() * n); }
@@ -702,6 +708,8 @@ function seatCanPick(v) {
   const t = seatMsgTurn(v);
   return mySeat === null || mySeat === t || amEditor();
 }
+// いまタップしてめくれる番か（白なしの4人目は自動でめくれる）
+function seatOpenForPick(v) { const t = seatMsgTurn(v); return t < 4 && !(v.w.length === 4 && t >= 3); }
 
 // ---- ホスト ----
 function hostSeatSync() {
@@ -711,15 +719,16 @@ function hostSeatSync() {
 }
 function hostStartSeat() {
   if (role !== 'host') return;
-  seatG = seatNew(randInt);
+  seatG = seatNew(randInt, seatHakuPref());
   hostSeatSync();
 }
 function hostSeatPick(k) {
   const g = seatG;
   if (!g || !seatPick(g, k)) return;
   hostSeatSync();
-  // 3人めくったら、最後の1枚は残りの人のもの
-  if (seatTurn(g) === 3) setTimeout(() => { if (seatG === g && seatPick(g, g.owner.indexOf(-1))) hostSeatSync(); }, 650);
+  // 白なしで3人めくったら、最後の1枚は残りの人のもの
+  const auto = seatAutoTile(g);
+  if (auto >= 0) setTimeout(() => { if (seatG === g && seatPick(g, auto)) hostSeatSync(); }, 650);
 }
 function hostSeatCancel() {
   if (seatG && !seatDone(seatG)) { seatG.st = 'end'; hostSeatSync(); }
@@ -728,7 +737,8 @@ function hostSeatCancel() {
 // メンバー（P1〜P4）を東・南・西・北の順に並べ替える。試合を記録する前だけ
 function hostSeatApply() {
   if (role !== 'host' || !seatG || !seatDone(seatG) || !seatCanApply()) return;
-  const order = seatOrderOf(seatG);
+  const r = seatResult(seatG.tiles, seatG.owner); if (!r) return;
+  const order = r.order;
   model.names = order.map(p => model.names[p]);
   input.vals = order.map(p => input.vals[p]); input.active = 0; input.editingId = null; input.op = null;
   if (mySeat !== null) mySeat = order.indexOf(mySeat);
@@ -759,7 +769,7 @@ function showSeatState(v) {
     if (same) seatView = null;
     return;
   }
-  if (same && prev.owner.every((p, k) => p === v.owner[k])) return;   // 変わっていない（定期送信）
+  if (same && prev.owner.every((p, k) => p === v.owner[k]) && prev.w.every((w, k) => w === v.w[k])) return;   // 変わっていない（定期送信）
   seatView = v;
   if (!same) { seatShown = null; openSeatSheet(); }
   else if (sheetKind === 'seat') updateSeatSheet(true);
@@ -768,45 +778,75 @@ function showSeatState(v) {
 // ---- シート ----
 function openSeatSheet() {
   const v = seatView; if (!v) return;
-  const tiles = h('div', { class: 'sk-tiles', id: 'sk-tiles' });
-  for (let k = 0; k < 4; k++) {
+  const n = v.w.length;
+  const tiles = h('div', { class: 'sk-tiles n' + n, id: 'sk-tiles' });
+  for (let k = 0; k < n; k++) {
     tiles.appendChild(h('button', { type: 'button', class: 'sk-tile', id: 'sk-tile-' + k, 'aria-label': (k + 1) + '枚目の牌', on: { click: () => onSeatTile(k) } }, [
       h('div', { class: 'sk-in' }, [h('div', { class: 'sk-back' }), h('div', { class: 'sk-face' })]),
       h('div', { class: 'sk-who' })
     ]));
   }
-  openSheet('seat', [h('h3', { text: '席決め' }), h('div', { class: 'sk-turn', id: 'sk-turn' }), tiles, h('div', { id: 'sk-result' }), h('div', { class: 'sheet-actions', id: 'sk-actions' })]);
+  const nodes = [h('h3', { text: '席決め' })];
+  if (role === 'host') {
+    nodes.push(h('div', { class: 'sk-mode', id: 'sk-mode', role: 'group', 'aria-label': 'ルール' }, [
+      h('button', { type: 'button', class: v.haku ? 'on' : '', text: '白あり', on: { click: () => hostSetSeatMode(true) } }),
+      h('button', { type: 'button', class: v.haku ? '' : 'on', text: '白なし', on: { click: () => hostSetSeatMode(false) } })
+    ]));
+  }
+  nodes.push(h('p', { class: 'sk-rule', text: v.haku
+    ? '東・南・西・北・白の5枚から1枚ずつ。白をひいた人のいる場所が卓の東になり、白の人は余った風をもらいます（白が余ったら、東の人のいる場所が卓の東）。'
+    : '東・南・西・北の4枚から1枚ずつ。ひいた風がその人の席です。' }));
+  nodes.push(h('div', { class: 'sk-turn', id: 'sk-turn' }), tiles, h('div', { id: 'sk-result' }), h('div', { class: 'sheet-actions', id: 'sk-actions' }));
+  openSheet('seat', nodes);
   seatShown = null;
   updateSeatSheet(false);
 }
 
 function onSeatTile(k) {
   const v = seatView;
-  if (!v || v.owner[k] >= 0 || seatMsgTurn(v) >= 3 || !seatCanPick(v)) return;
+  if (!v || v.owner[k] >= 0 || !seatOpenForPick(v) || !seatCanPick(v)) return;
   if (role === 'host') hostSeatPick(k);
   else if (guest) guest.send({ t: 'seatpick', id: v.id, k }, true);
 }
 
+function flipSeatTile(k, label, pc) {
+  const v = seatView, tile = $('sk-tile-' + k);
+  if (!v || !tile || tile.classList.contains('open')) return;
+  const w = v.w[k], face = tile.querySelector('.sk-face');
+  face.textContent = w === SEAT_HAKU ? '' : w;
+  face.classList.toggle('ton', w === '東'); face.classList.toggle('haku', w === SEAT_HAKU);
+  const who = tile.querySelector('.sk-who');
+  who.textContent = label; if (pc) who.style.setProperty('--pc', pc); else who.classList.add('left');
+  tile.classList.add('open'); tile.setAttribute('aria-label', label + ': ' + w);
+}
+
 function updateSeatSheet(animate) {
   const v = seatView; if (!v || sheetKind !== 'seat') return;
-  for (let k = 0; k < 4; k++) {
-    const tile = $('sk-tile-' + k), p = v.owner[k];
-    if (!tile || p < 0 || tile.classList.contains('open')) continue;
-    const face = tile.querySelector('.sk-face');
-    face.textContent = v.w[k]; face.classList.toggle('ton', v.w[k] === '東');
-    const who = tile.querySelector('.sk-who');
-    who.textContent = nm(p); who.style.setProperty('--pc', PC[p]);
-    tile.classList.add('open'); tile.setAttribute('aria-label', nm(p) + ': ' + v.w[k]);
-    if (animate && navigator.vibrate) { try { navigator.vibrate(12); } catch (e) { /* 対応していない端末 */ } }
+  const n = v.w.length;
+  for (let k = 0; k < n; k++) {
+    const p = v.owner[k];
+    if (p < 0) continue;
+    const tile = $('sk-tile-' + k);
+    if (tile && !tile.classList.contains('open')) {
+      flipSeatTile(k, nm(p), PC[p]);
+      if (animate && navigator.vibrate) { try { navigator.vibrate(12); } catch (e) { /* 対応していない端末 */ } }
+    }
   }
   const t = seatMsgTurn(v), turnEl = $('sk-turn');
   clear(turnEl);
-  $('sk-tiles').classList.toggle('wait', t >= 4 || !seatCanPick(v));
+  if ($('sk-mode')) $('sk-mode').style.display = t > 0 ? 'none' : '';
+  $('sk-tiles').classList.toggle('wait', !seatOpenForPick(v) || !seatCanPick(v));
   if (t >= 4) {
     turnEl.style.removeProperty('--pc');
     turnEl.appendChild(document.createTextNode('席が決まりました'));
     turnEl.appendChild(h('small', { text: '東の人が起家（最初の親）です' }));
-    if (seatShown !== v.id) { seatShown = v.id; const id = v.id; setTimeout(() => { if (seatView && seatView.id === id) renderSeatResult(); }, animate ? 700 : 0); }
+    if (seatShown !== v.id) {
+      seatShown = v.id; const id = v.id, li = v.owner.indexOf(-1), still = () => seatView && seatView.id === id && sheetKind === 'seat';
+      // 余りの牌は、少し遅れて表にする
+      if (li >= 0) { if (animate) setTimeout(() => { if (still()) flipSeatTile(li, '余り', null); }, 650); else flipSeatTile(li, '余り', null); }
+      const wait = !animate ? 0 : (li >= 0 ? 1300 : 700);
+      setTimeout(() => { if (still()) renderSeatResult(); }, wait);
+    }
   } else {
     turnEl.style.setProperty('--pc', PC[t]);
     turnEl.appendChild(h('b', { text: nm(t) }));
@@ -816,31 +856,39 @@ function updateSeatSheet(animate) {
   }
 }
 
+// 結果の説明文（白ありのとき、どこが卓の東か）
+function seatNoteNodes(r, haku) {
+  if (!haku) return null;
+  if (r.haku >= 0) return ['白をひいた ', h('b', { text: nm(r.haku) }), ' さんがいま座っている場所が、卓の「東」です。' + nm(r.haku) + ' さんは余った「' + r.left + '」の席に移ります。'];
+  return ['白が余ったので、東をひいた ', h('b', { text: nm(r.ref) }), ' さんのいる場所が、卓の「東」です。'];
+}
+
 function renderSeatResult() {
   const v = seatView; if (!v || sheetKind !== 'seat') return;
-  const order = seatOrderFromMsg(v); if (!order) return;
+  const r = seatResult(v.w, v.owner); if (!r) return;
   // 卓の図: 東が手前、右が南（下家）、向かいが西（対面）、左が北（上家）
   const table = h('div', { class: 'sk-table' });
-  order.forEach((p, k) => table.appendChild(h('div', { class: 'sk-seat sk-s' + k + (k === 0 ? ' oya' : ''), style: { '--pc': PC[p], 'animation-delay': (k * 0.12) + 's' } }, [
+  if (v.haku) table.appendChild(h('div', { class: 'sk-center' }, [h('div', {}, ['手前が卓の東', h('br'), '（', h('b', { text: nm(r.ref) }), ' さんの', h('br'), 'いまの場所）'])]));
+  r.order.forEach((p, k) => table.appendChild(h('div', { class: 'sk-seat sk-s' + k + (k === 0 ? ' oya' : ''), style: { '--pc': PC[p], 'animation-delay': (k * 0.12) + 's' } }, [
     h('i', { text: SEAT_WINDS[k] }), h('span', { text: nm(p) }), k === 0 ? h('small', { text: '起家' }) : null
   ])));
+  const note = seatNoteNodes(r, v.haku);
   const box = $('sk-result'); clear(box);
-  box.appendChild(h('div', { class: 'sk-result' }, [table]));
+  box.appendChild(h('div', { class: 'sk-result' }, [table, note ? h('p', { class: 'sk-note' }, note) : null]));
   renderSeatActions();
 }
 
 function renderSeatActions() {
   const v = seatView, acts = $('sk-actions'); if (!v || !acts) return;
   clear(acts);
-  const done = seatMsgTurn(v) >= 4;
   const btn = (c, text, fn) => h('button', { type: 'button', class: c, text, on: { click: fn } });
-  if (!done) {
+  const r = seatResult(v.w, v.owner);
+  if (!r) {
     if (role === 'host') acts.appendChild(btn('link', 'やめる', hostSeatCancel));
     else acts.appendChild(btn('link', 'とじる', closeSheet));
     return;
   }
-  const order = seatOrderFromMsg(v) || [0, 1, 2, 3];
-  const already = order.every((p, k) => p === k);
+  const already = r.order.every((p, k) => p === k);
   if (role === 'host') {
     const apply = seatCanApply() && !already;
     acts.appendChild(apply ? btn('btn gold', 'この席順でメンバーを並べる', hostSeatApply) : btn('btn gold', 'とじる', closeSheet));

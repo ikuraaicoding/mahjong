@@ -472,7 +472,8 @@ function afterChange(animate) { saveHost(); renderAll(animate); broadcastSnap(tr
 
 function hostMsg(id, o) {
   if (!o || typeof o.t !== 'string') return;
-  if (o.t === 'req') { sendSnapTo(id); return; }
+  if (o.t === 'req') { sendSnapTo(id); if (seatG && seatG.st === 'play') room.sendTo(id, seatToMsg(seatG), true); return; }
+  if (o.t === 'seatpick') { if (seatG && o.id === seatG.id && Number.isInteger(o.k) && seatTurn(seatG) < 3) hostSeatPick(o.k); return; }
   if (o.t !== 'rec') return;
   const p = room.peers.get(id); if (!p) return;
   const no = why => room.sendTo(id, { t: 'no', op: typeof o.op === 'string' ? o.op.slice(0, 40) : '', why }, true);
@@ -500,7 +501,7 @@ async function hostCreate() {
     if (saved && saved.games.length && confirm('前回の卓（' + saved.games.length + '試合）の続きから始めますか？\n「キャンセル」を押すと、新しい卓にします。')) m = saved;
   }
   if (!m) m = newModel(ruleFromSelect(), model.names);
-  model = m; synced = true; role = 'host'; myId = 0; editors.clear(); userLocked = false; resetInput();
+  model = m; synced = true; role = 'host'; myId = 0; editors.clear(); userLocked = false; resetInput(); seatG = null; seatView = null;
   epoch = Math.floor(Math.random() * 2147483647); snapN = 0;
   try {
     room = await R.host({
@@ -513,7 +514,7 @@ async function hostCreate() {
   roster = buildRoster();
   keepAwake(); saveHost(); buildBoardOnce(); renderAll(false); renderChip(); show('s-table');
   clearInterval(periodicT);
-  periodicT = setInterval(() => { if (role !== 'host' || !room) { clearInterval(periodicT); return; } broadcastSnap(false); room.bcast({ t: 'roster', players: roster }, false); }, 6000);
+  periodicT = setInterval(() => { if (role !== 'host' || !room) { clearInterval(periodicT); return; } broadcastSnap(false); room.bcast({ t: 'roster', players: roster }, false); if (seatG && seatG.st === 'play') room.bcast(seatToMsg(seatG), false); }, 6000);
   openPeopleSheet();
 }
 
@@ -532,6 +533,8 @@ function guestMsg(o) {
     const after = sessionTotals(model).join(',');
     renderAll(wasSynced && before !== after);
     if (rejoining) { rejoining = false; hideBanner(); }
+  } else if (o.t === 'seat') {
+    showSeatState(parseSeat(o));
   } else if (o.t === 'roster') {
     const r = cleanRoster(o.players); if (!r) return;
     roster = r; renderEntry(); renderHeader();
@@ -557,7 +560,7 @@ async function joinWith(text, identity) {
       onWelcome: id => {
         const first = role !== 'guest';
         role = 'guest'; myId = id; keepAwake();
-        if (first) { synced = false; model = newModel(MJ_PRESETS[0]); lastSnap = { e: null, n: -1 }; roster = []; resetInput(); buildBoardOnce(); }
+        if (first) { synced = false; model = newModel(MJ_PRESETS[0]); lastSnap = { e: null, n: -1 }; roster = []; resetInput(); seatView = null; buildBoardOnce(); }
         renderAll(false); renderChip(); show('s-table');
         guest.send({ t: 'req' }, true);
       },
@@ -587,7 +590,7 @@ function rejoin() {
 }
 function endGuest(msg) {
   stopScan(); closeSheet();
-  guest = null; role = null; rejoining = false; roster = []; synced = false; hideBanner();
+  guest = null; role = null; rejoining = false; roster = []; synced = false; seatView = null; hideBanner();
   show('s-menu'); $('menu-err').textContent = msg || '';
   if (msg) toast(msg);
 }
@@ -682,6 +685,181 @@ function deleteGame(id) {
 }
 
 /* =====================================================================
+   席決め（伏せた風牌を1人ずつめくる。全員の画面で同じ牌がめくれる）
+   ホストが牌の中身を持ち、めくられた牌だけを配る。参加者は「この牌をめくる」とお願いするだけ。
+===================================================================== */
+let seatG = null;      // ホスト: 牌の中身まで入った本体
+let seatView = null;   // 画面に出している状態（parseSeat の形）。ホストも参加者も、これで描く
+let seatShown = null;  // 結果の卓の図を出した席決めの id
+
+function randInt(n) {
+  try { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; } catch (e) { return Math.floor(Math.random() * n); }
+}
+function seatMsgTurn(v) { return v.owner.filter(p => p >= 0).length; }
+function seatCanApply() { return model.games.length === 0; }
+function seatCanPick(v) {
+  if (role === 'host') return true;
+  const t = seatMsgTurn(v);
+  return mySeat === null || mySeat === t || amEditor();
+}
+
+// ---- ホスト ----
+function hostSeatSync() {
+  const msg = seatToMsg(seatG);
+  if (room) room.bcast(msg, true);
+  showSeatState(parseSeat(msg));
+}
+function hostStartSeat() {
+  if (role !== 'host') return;
+  seatG = seatNew(randInt);
+  hostSeatSync();
+}
+function hostSeatPick(k) {
+  const g = seatG;
+  if (!g || !seatPick(g, k)) return;
+  hostSeatSync();
+  // 3人めくったら、最後の1枚は残りの人のもの
+  if (seatTurn(g) === 3) setTimeout(() => { if (seatG === g && seatPick(g, g.owner.indexOf(-1))) hostSeatSync(); }, 650);
+}
+function hostSeatCancel() {
+  if (seatG && !seatDone(seatG)) { seatG.st = 'end'; hostSeatSync(); }
+  seatG = null; seatView = null; closeSheet();
+}
+// メンバー（P1〜P4）を東・南・西・北の順に並べ替える。試合を記録する前だけ
+function hostSeatApply() {
+  if (role !== 'host' || !seatG || !seatDone(seatG) || !seatCanApply()) return;
+  const order = seatOrderOf(seatG);
+  model.names = order.map(p => model.names[p]);
+  input.vals = order.map(p => input.vals[p]); input.active = 0; input.editingId = null; input.op = null;
+  if (mySeat !== null) mySeat = order.indexOf(mySeat);
+  seatG.st = 'applied'; seatG.perm = order;
+  if (room) room.bcast(seatToMsg(seatG), true);
+  seatG = null; seatView = null; closeSheet();
+  afterChange(false);
+  toast('起家は ' + nm(0) + ' さんです');
+}
+
+// ---- 受け取った状態を画面に出す（ホスト自身の更新も、ここを通る） ----
+function showSeatState(v) {
+  if (!v) return;
+  const prev = seatView;
+  const same = prev && prev.id === v.id;
+  if (v.st === 'end') {
+    if (same) { seatView = null; if (sheetKind === 'seat') { closeSheet(); if (role !== 'host') toast('ホストが席決めをやめました'); } }
+    return;
+  }
+  if (v.st === 'applied') {
+    // 参加者: 自分の席の印も、並べ替えにあわせて動かす（見ていた席決めのときだけ。重ねて動かさない）
+    if (same && role === 'guest') {
+      if (mySeat !== null) { mySeat = v.perm.indexOf(mySeat); try { localStorage.setItem(KEY_SEAT, String(mySeat)); } catch (e) { /* 保存できなくても動く */ } }
+      if (sheetKind === 'seat') closeSheet();
+      toast('席順どおりに、メンバーが並べ替えられました');
+      renderBoard(false);
+    }
+    if (same) seatView = null;
+    return;
+  }
+  if (same && prev.owner.every((p, k) => p === v.owner[k])) return;   // 変わっていない（定期送信）
+  seatView = v;
+  if (!same) { seatShown = null; openSeatSheet(); }
+  else if (sheetKind === 'seat') updateSeatSheet(true);
+}
+
+// ---- シート ----
+function openSeatSheet() {
+  const v = seatView; if (!v) return;
+  const tiles = h('div', { class: 'sk-tiles', id: 'sk-tiles' });
+  for (let k = 0; k < 4; k++) {
+    tiles.appendChild(h('button', { type: 'button', class: 'sk-tile', id: 'sk-tile-' + k, 'aria-label': (k + 1) + '枚目の牌', on: { click: () => onSeatTile(k) } }, [
+      h('div', { class: 'sk-in' }, [h('div', { class: 'sk-back' }), h('div', { class: 'sk-face' })]),
+      h('div', { class: 'sk-who' })
+    ]));
+  }
+  openSheet('seat', [h('h3', { text: '席決め' }), h('div', { class: 'sk-turn', id: 'sk-turn' }), tiles, h('div', { id: 'sk-result' }), h('div', { class: 'sheet-actions', id: 'sk-actions' })]);
+  seatShown = null;
+  updateSeatSheet(false);
+}
+
+function onSeatTile(k) {
+  const v = seatView;
+  if (!v || v.owner[k] >= 0 || seatMsgTurn(v) >= 3 || !seatCanPick(v)) return;
+  if (role === 'host') hostSeatPick(k);
+  else if (guest) guest.send({ t: 'seatpick', id: v.id, k }, true);
+}
+
+function updateSeatSheet(animate) {
+  const v = seatView; if (!v || sheetKind !== 'seat') return;
+  for (let k = 0; k < 4; k++) {
+    const tile = $('sk-tile-' + k), p = v.owner[k];
+    if (!tile || p < 0 || tile.classList.contains('open')) continue;
+    const face = tile.querySelector('.sk-face');
+    face.textContent = v.w[k]; face.classList.toggle('ton', v.w[k] === '東');
+    const who = tile.querySelector('.sk-who');
+    who.textContent = nm(p); who.style.setProperty('--pc', PC[p]);
+    tile.classList.add('open'); tile.setAttribute('aria-label', nm(p) + ': ' + v.w[k]);
+    if (animate && navigator.vibrate) { try { navigator.vibrate(12); } catch (e) { /* 対応していない端末 */ } }
+  }
+  const t = seatMsgTurn(v), turnEl = $('sk-turn');
+  clear(turnEl);
+  $('sk-tiles').classList.toggle('wait', t >= 4 || !seatCanPick(v));
+  if (t >= 4) {
+    turnEl.style.removeProperty('--pc');
+    turnEl.appendChild(document.createTextNode('席が決まりました'));
+    turnEl.appendChild(h('small', { text: '東の人が起家（最初の親）です' }));
+    if (seatShown !== v.id) { seatShown = v.id; const id = v.id; setTimeout(() => { if (seatView && seatView.id === id) renderSeatResult(); }, animate ? 700 : 0); }
+  } else {
+    turnEl.style.setProperty('--pc', PC[t]);
+    turnEl.appendChild(h('b', { text: nm(t) }));
+    turnEl.appendChild(document.createTextNode(' さんの番'));
+    turnEl.appendChild(h('small', { text: seatCanPick(v) ? '伏せてある牌を1枚えらんでください' : nm(t) + ' さんがめくるのを待っています' }));
+    renderSeatActions();
+  }
+}
+
+function renderSeatResult() {
+  const v = seatView; if (!v || sheetKind !== 'seat') return;
+  const order = seatOrderFromMsg(v); if (!order) return;
+  // 卓の図: 東が手前、右が南（下家）、向かいが西（対面）、左が北（上家）
+  const table = h('div', { class: 'sk-table' });
+  order.forEach((p, k) => table.appendChild(h('div', { class: 'sk-seat sk-s' + k + (k === 0 ? ' oya' : ''), style: { '--pc': PC[p], 'animation-delay': (k * 0.12) + 's' } }, [
+    h('i', { text: SEAT_WINDS[k] }), h('span', { text: nm(p) }), k === 0 ? h('small', { text: '起家' }) : null
+  ])));
+  const box = $('sk-result'); clear(box);
+  box.appendChild(h('div', { class: 'sk-result' }, [table]));
+  renderSeatActions();
+}
+
+function renderSeatActions() {
+  const v = seatView, acts = $('sk-actions'); if (!v || !acts) return;
+  clear(acts);
+  const done = seatMsgTurn(v) >= 4;
+  const btn = (c, text, fn) => h('button', { type: 'button', class: c, text, on: { click: fn } });
+  if (!done) {
+    if (role === 'host') acts.appendChild(btn('link', 'やめる', hostSeatCancel));
+    else acts.appendChild(btn('link', 'とじる', closeSheet));
+    return;
+  }
+  const order = seatOrderFromMsg(v) || [0, 1, 2, 3];
+  const already = order.every((p, k) => p === k);
+  if (role === 'host') {
+    const apply = seatCanApply() && !already;
+    acts.appendChild(apply ? btn('btn gold', 'この席順でメンバーを並べる', hostSeatApply) : btn('btn gold', 'とじる', closeSheet));
+    acts.appendChild(btn('btn', 'もう一度', hostStartSeat));
+    if (apply) acts.appendChild(btn('link', '並べ替えずにとじる', closeSheet));
+    if (!seatCanApply()) acts.appendChild(h('p', { class: 'hint', style: { 'text-align': 'center' }, text: '試合を記録したあとはメンバーの並びを変えられないので、結果の表示だけです。' }));
+  } else {
+    acts.appendChild(btn('btn gold', 'とじる', closeSheet));
+    if (seatCanApply() && !already) acts.appendChild(h('p', { class: 'hint', style: { 'text-align': 'center' }, text: 'ホストがこの席順に並べ替えると、全員の画面に反映されます。' }));
+  }
+}
+
+function onSeatButton() {
+  if (seatView) { openSeatSheet(); return; }
+  if (role === 'host') hostStartSeat();
+  else toast('ホストが席決めを始めると、ここに出ます');
+}
+
+/* =====================================================================
    履歴への保存・新しい対局・退出
 ===================================================================== */
 function saveHistory() {
@@ -710,7 +888,7 @@ function quitAll() {
   if (role === 'host' && !confirm('部屋を閉じます。参加者の画面は、つながらなくなります。\n（この卓の記録は、この端末に残ります）')) return;
   stopScan(); closeSheet();
   if (role === 'host' && room) room.close(); else if (guest) guest.close();
-  room = null; guest = null; role = null; roster = []; rejoining = false; synced = false; editors.clear(); hideBanner();
+  room = null; guest = null; role = null; roster = []; rejoining = false; synced = false; editors.clear(); seatG = null; seatView = null; hideBanner();
   show('s-menu');
 }
 
@@ -766,6 +944,7 @@ $('b-join').addEventListener('click', () => {
 $('b-paste').addEventListener('click', () => { const t = $('paste').value.trim(); if (!t) { $('menu-err').textContent = '参加コードを貼り付けてください'; return; } saveName(); joinWith(t); });
 $('sc-back').addEventListener('click', () => { stopScan(); show('s-menu'); });
 $('b-members').addEventListener('click', openMembersSheet);
+$('b-seat').addEventListener('click', onSeatButton);
 $('b-people').addEventListener('click', () => (role === 'host' ? openPeopleSheet() : (openSheet('people', []), renderPeopleSheet())));
 $('t-chip').addEventListener('click', () => { if (role === 'host') openPeopleSheet(); });
 $('b-save').addEventListener('click', saveHistory);

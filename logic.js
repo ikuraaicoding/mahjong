@@ -360,3 +360,51 @@ function calcStats(sessions, carry) {
     }))
     .sort((a, b) => b.total - a.total || b.games - a.games);
 }
+
+/* =========================================
+   席決め（伏せた牌を1人1枚ずつめくる）。アプリとオンライン同期の両方で使う
+   - 白なし: 東・南・西・北の4枚。ひいた風がその人の席
+   - 白あり: 東・南・西・北・白の5枚。4人がひいて1枚余る
+       白をひいた人がいま座っている場所を、卓の「東」にする。白の人は余った風をもらう
+       白が余ったときは、東をひいた人のいる場所が卓の「東」
+   seat = { id, haku, tiles[4|5], owner[4|5]: 牌ごとにめくった人(-1 = まだ), st, perm }
+========================================= */
+const SEAT_WINDS = ['東', '南', '西', '北'];
+const SEAT_HAKU = '白';
+
+function seatNew(randInt, haku) {
+  const t = haku ? SEAT_WINDS.concat([SEAT_HAKU]) : SEAT_WINDS.slice();
+  for (let i = t.length - 1; i > 0; i--) { const j = randInt(i + 1); const x = t[i]; t[i] = t[j]; t[j] = x; }
+  return { id: newId(), haku: !!haku, tiles: t, owner: t.map(() => -1), st: 'play', perm: null };
+}
+function seatTurn(s) { return s.owner.filter(o => o >= 0).length; }
+function seatDone(s) { return seatTurn(s) >= 4; }
+
+// 牌 k を、いまの番の人がめくる。めくれたら true
+function seatPick(s, k) {
+  if (!s || s.st !== 'play' || !Number.isInteger(k) || k < 0 || k >= s.tiles.length || s.owner[k] >= 0 || seatDone(s)) return false;
+  s.owner[k] = seatTurn(s);
+  return true;
+}
+// 白なしで3人めくったら、最後の1枚は残りの人のもの（めくるべき牌。なければ -1）
+function seatAutoTile(s) {
+  return (s.tiles.length === 4 && seatTurn(s) === 3) ? s.owner.indexOf(-1) : -1;
+}
+// 全員めくったときに、表にしてよい牌か（めくった牌と、全員そろったあとの余り）
+function seatRevealed(owner, k) { return owner[k] >= 0 || owner.filter(o => o >= 0).length >= 4; }
+
+/* 結果。tiles は牌の中身（伏せたままの牌は '' でもよい）。そろっていなければ null
+   wind[p]: 人ごとの風 / order[k]: 東南西北の順の人 / ref: いまの場所が卓の東になる人
+   haku: 白をひいた人(-1 = 白は余り・白なし) / left: 余った牌('' = なし) */
+function seatResult(tiles, owner) {
+  if (owner.filter(o => o >= 0).length < 4) return null;
+  const wind = [null, null, null, null];
+  owner.forEach((p, k) => { if (p >= 0) wind[p] = tiles[k]; });
+  const li = owner.indexOf(-1), left = li >= 0 ? tiles[li] : '';
+  let haku = wind.indexOf(SEAT_HAKU), ref;
+  if (haku >= 0) { wind[haku] = left; ref = haku; }
+  else ref = wind.indexOf('東');
+  const order = SEAT_WINDS.map(w => wind.indexOf(w));
+  if (order.some(p => p < 0)) return null;
+  return { wind, order, ref, haku, left };
+}

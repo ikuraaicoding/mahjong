@@ -269,5 +269,17 @@ a.link { text-align: center; }
 .sk-seat small { font-size: 10px; color: var(--gold-hi); letter-spacing: .08em; }
 .sk-s0 { left: 69px; bottom: -8px; } .sk-s1 { right: -10px; top: 62px; } .sk-s2 { left: 69px; top: 0; } .sk-s3 { left: -10px; top: 62px; }
 .sk-s2 { flex-direction: column-reverse; }
+.sk-mode { display: flex; justify-content: center; gap: 0; margin: -2px auto 8px; width: max-content; border: 1px solid var(--line-strong); border-radius: 999px; overflow: hidden; }
+.sk-mode button { padding: 6px 18px; font: 600 12.5px var(--serif); letter-spacing: .1em; color: var(--sub); }
+.sk-mode button.on { background: var(--gold-grad); color: #1a1405; }
+.sk-rule { font-size: 11.5px; color: var(--sub); line-height: 1.6; text-align: center; margin: 0 4px 12px; }
+.sk-tiles.n5 { grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 0 0 14px; }
+.sk-tiles.n5 .sk-face { font-size: 28px; }
+.sk-face.haku::after { content: ""; position: absolute; inset: 20% 22%; border: 2px solid #5a8fc8; border-radius: 4px; }
+.sk-who.left { color: var(--gold-hi); }
+.sk-center { position: absolute; left: 58px; right: 58px; top: 44px; bottom: 44px; z-index: 1; display: grid; place-items: center; text-align: center; font: 500 10px/1.45 var(--sans); color: rgba(239,232,216,.75); }
+.sk-center b { font: 700 11px var(--serif); color: var(--gold-hi); }
+.sk-note { font-size: 12.5px; color: var(--ivory); line-height: 1.7; text-align: center; margin: 4px 4px 0; }
+.sk-note b { color: var(--gold-hi); }
 .sk-tiles.wait .sk-tile:not(.open) { cursor: default; opacity: .8; }
 .sk-tiles.wait .sk-tile:not(.open):active .sk-in { transform: none; }

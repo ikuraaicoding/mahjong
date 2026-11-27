@@ -11,18 +11,20 @@
 const U = window.MJUI, R = window.NomiRoom;
 const { h, clear, PC, toast } = U;
 const $ = id => document.getElementById(id);
-const KEY_MAIN = 'mahjong_v3', KEY_NAME = 'mj_online_name', KEY_SEAT = 'mj_online_seat', KEY_GUEST = 'mj_guest_room', KEY_AUTO = 'mj_guest_autosave', KEY_SEG = 'mj_guest_seg';
+const KEY_MAIN = 'mahjong_v3', KEY_NAME = 'mj_online_name', KEY_SEAT = 'mj_online_seat', KEY_GUEST = 'mj_guest_room', KEY_AUTO = 'mj_guest_autosave', KEY_SEG = 'mj_guest_seg', KEY_LAST = 'mj_guest_last';
 const LEGACY_KEYS = ['mahjong_pNames', 'mahjong_archives', 'mahjong_app2_scores'];
 const CODE_RE = /MJ1~[A-Za-z0-9_-]{22}~[A-Za-z0-9_-]{20,120}/;
 const GUEST_RESUME_MS = 6 * 3600 * 1000;   // 開き直したとき、これより最近まで参加していたら、同じ卓につなぎ直す
 const REJOIN_WAIT = 30 * 60 * 1000;        // 参加中にホストが止まったとき、アプリを開き直すのを待つ長さ
 const RESUME_WAIT = 3 * 60 * 1000;         // この画面を開き直したとき、さっきの卓を待つ長さ
+const LAST_KEEP_MS = 3 * 24 * 3600 * 1000;  // 最後に受け取った卓の記録を、この端末に残しておく長さ
 
 /* ---------- 状態 ---------- */
 let guest = null, joinSeq = 0, myId = -1, inTable = false, synced = false, rejoining = false;
 let code = '', pendingCode = '', identity = null;
 let model = newModel(MJ_PRESETS[0]), roster = [], lastSnap = { e: null, n: -1 };
 let netState = { up: 0, total: 2 }, lastModel = null, touchT = null;
+let offline = false;   // ホストとつながっていないが、最後に受け取った記録を見ている
 let myName = '', mySeat = null;
 let input = { vals: ['', '', '', ''], active: 0, editingId: null, op: null }, sending = false, sendTimer = null;
 const finSeen = new Set();
@@ -65,10 +67,11 @@ function renderHeader() {
   $('t-title').textContent = model.title || 'ホストの卓';
   const n = model.games.length;
   $('t-sub').textContent = !synced ? 'ホストの卓を受信中…' : `${n ? n + '試合を記録' : 'これから第1試合'} ・ ${ruleName(model.rule)}`;
-  const down = netState.up === 0 || rejoining;
+  const down = offline || netState.up === 0 || rejoining;
   $('t-people').className = 'share-btn ' + (down ? 'warn' : 'on');
-  $('t-people-label').textContent = rejoining ? 'つなぎ直し中' : (netState.up === 0 ? '再接続中' : (roster.length ? `参加中 ${roster.length}人` : '参加中'));
-  $('viewer-note').hidden = amEditor() || !synced;
+  $('t-people-label').textContent = offline ? 'オフライン' : rejoining ? 'つなぎ直し中' : (netState.up === 0 ? '再接続中' : (roster.length ? `参加中 ${roster.length}人` : '参加中'));
+  $('viewer-note').hidden = amEditor() || !synced || offline;
+  $('b-quit').textContent = offline ? 'この画面を閉じる' : '退出する';
 }
 function renderBoard(animate) {
   const last = model.games[model.games.length - 1];
@@ -213,6 +216,8 @@ async function saveWithTitle(m) {
 }
 $('b-save').addEventListener('click', () => saveWithTitle(model));
 $('b-last-save').addEventListener('click', () => saveWithTitle(lastModel));
+$('b-last-view').addEventListener('click', () => viewLast());
+$('b-last-forget').addEventListener('click', () => { forgetLast(); renderMenu(); });
 
 // ホストが対局を終えた: 結果を出して、自分の履歴にも保存できるようにする
 function onFin(f) {
@@ -251,7 +256,7 @@ function onMsg(o) {
     lastSnap = { e: p.e, n: p.n };
     const before = sessionTotals(model).join(','), was = synced;
     model = p.model; synced = true;
-    if (model.games.length) lastModel = model;
+    if (model.games.length) { lastModel = model; cacheSnap(o); }
     renderAll(was && before !== sessionTotals(model).join(','));
   } else if (o.t === 'seat') {
     onSeat(parseSeat(o));
@@ -260,7 +265,9 @@ function onMsg(o) {
     roster = r; renderHeader(); renderEntry();
     if (U.sheetKind() === 'people') U.refillSheet(peopleNodes());
   } else if (o.t === 'fin') {
-    onFin(parseFin(o));
+    const f = parseFin(o);
+    if (f) cacheSnap(o.snap);
+    onFin(f);
   } else if (o.t === 'ok') {
     if (typeof o.op === 'string' && o.op === input.op) { resetInput(); renderEntry(); toast('記録しました'); }
   } else if (o.t === 'no') {
@@ -307,7 +314,7 @@ function resetTable() {
   resetInput(); seatUI.reset();
 }
 function onWelcome(id) {
-  myId = id; rejoining = false; U.hideBanner();
+  myId = id; rejoining = false; offline = false; U.hideBanner();
   if (!inTable) { inTable = true; show('s-table'); }
   renderAll(false);
   guest.send({ t: 'req' }, true);
@@ -332,19 +339,43 @@ function rejoin() {
 function onEnd(why) {
   guest = null;
   if (why === 'kicked') endTable('ホストに外されました');
+  else if (model.games.length) goOffline(why === 'closed' ? 'ホストが共有をやめました' : 'ホストにつながりません', why !== 'closed');
   else if (why === 'closed') endTable('ホストが共有をやめました');
   else endTable(inTable ? 'ホストにつながりませんでした' : 'ホストが見つかりませんでした。QRやリンクがいまのものか、ホストのスマホで麻雀精算が開いているか確かめてください。');
 }
+// ホストとつながらなくても、最後に受け取った記録はそのまま見られるようにする（入力・席決めはできない）
+function goOffline(msg, canRetry) {
+  stopScan(); U.wake(false); clearInterval(touchT);
+  if (U.sheetKind() === 'seat' || U.sheetKind() === 'people') U.closeSheet();
+  guest = null; inTable = false; rejoining = false; offline = true;
+  roster = []; myId = -1; resetInput(); seatUI.reset();
+  if (!canRetry) { code = ''; identity = null; forgetGuest(); }
+  synced = true; show('s-table'); renderAll(false);
+  U.banner(msg + '。最後に受け取った記録を表示しています', canRetry ? { label: 'つなぎ直す', fn: retry } : null);
+}
+function retry() {
+  if (!code || guest) return;
+  offline = false; rejoining = true; renderHeader();
+  U.banner('ホストを待っています…（ホストが麻雀精算を開き直すと、自動でつながります）', { label: 'やめる', fn: () => leave(false) });
+  joinWith(code, { quiet: true, wait: REJOIN_WAIT });
+}
+// 入口の「さっきの卓」から、記録だけを見る
+function viewLast() {
+  if (!lastModel || !lastModel.games.length) return;
+  model = lastModel; offline = true; synced = true; roster = []; myId = -1;
+  show('s-table'); renderAll(false);
+  U.banner('さっきの卓の記録です（ホストとはつながっていません）');
+}
 function endTable(msg) {
   stopScan(); U.closeSheet(); U.hideBanner(); U.wake(false); clearInterval(touchT);
-  if (inTable && model.games.length) lastModel = model;
-  guest = null; inTable = false; rejoining = false; code = ''; identity = null;
+  if ((inTable || offline) && model.games.length) lastModel = model;
+  guest = null; inTable = false; rejoining = false; offline = false; code = ''; identity = null;
   resetTable(); forgetGuest();
   renderMenu(); show('s-menu'); menuErr(msg);
   if (msg) toast(msg, 4000);
 }
 async function leave(confirmFirst) {
-  if (confirmFirst && inTable && !await U.ask({ title: '退出する', body: 'この卓の画面を閉じます。\n（あとで同じQRから入り直せます）', ok: '退出する' })) return;
+  if (confirmFirst && inTable && !offline && !await U.ask({ title: '退出する', body: 'この卓の画面を閉じます。\n（あとで同じQRから入り直せます）', ok: '退出する' })) return;
   joinSeq++;
   const g = guest; guest = null;
   try { if (g) g.close(); } catch (e) { /* 閉じられなくても続ける */ }
@@ -362,6 +393,22 @@ function touchGuest() {
   try { const s = JSON.parse(localStorage.getItem(KEY_GUEST)); if (s && s.code === code) { s.at = Date.now(); localStorage.setItem(KEY_GUEST, JSON.stringify(s)); } } catch (e) { /* 同上 */ }
 }
 function forgetGuest() { try { localStorage.removeItem(KEY_GUEST); } catch (e) { /* 同上 */ } }
+// 最後に受け取った卓（試合があるもの）を端末に残す。中身が変わったときだけ書く
+let cacheKey = '';
+function cacheSnap(o) {
+  const k = JSON.stringify([o.names, o.title, o.rule, o.g, o.rules]);
+  if (k === cacheKey) return;
+  cacheKey = k;
+  try { localStorage.setItem(KEY_LAST, JSON.stringify({ v: 1, code, snap: o, at: Date.now() })); } catch (e) { /* 残せなくても見るのは続けられる */ }
+}
+function cachedTable() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(KEY_LAST)); } catch (e) { s = null; }
+  if (!s || s.v !== 1 || !(Date.now() - s.at < LAST_KEEP_MS)) return null;
+  const p = parseSnap(s.snap);   // 端末に残したものも、受け取ったときと同じ検査を通す
+  return p && p.model.games.length ? { code: typeof s.code === 'string' ? s.code : '', model: p.model, e: p.e, n: p.n } : null;
+}
+function forgetLast() { try { localStorage.removeItem(KEY_LAST); } catch (e) { /* 同上 */ } lastModel = null; cacheKey = ''; }
 async function savedGuest(want) {
   let s = null;
   try { s = JSON.parse(localStorage.getItem(KEY_GUEST)); } catch (e) { s = null; }
@@ -452,11 +499,19 @@ if ('serviceWorker' in navigator) {
   try { fromLink = (CODE_RE.exec(decodeURIComponent(location.hash || '')) || [''])[0]; } catch (e) { fromLink = ''; }
   if (location.hash) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* 消せなくても動く */ } }
   renderAll(false);
+  const cache = cachedTable();
+  if (cache) lastModel = cache.model;
   const saved = await savedGuest(fromLink || null);
   if (saved) {
     // 開き直した（または同じ卓のリンクをもう一度開いた）→ 同じ人として、つなぎ直す
     code = saved.code; identity = saved.identity;
-    joinWith(code, { wait: RESUME_WAIT, resume: true });
+    if (cache && cache.code === saved.code) {
+      // 最後に受け取った記録をすぐ見せながら、裏でつなぎ直す
+      model = cache.model; synced = true; lastSnap = { e: cache.e, n: cache.n }; inTable = true; rejoining = true;
+      show('s-table'); renderAll(false);
+      U.banner('つなぎ直しています…（最後に受け取った記録を表示しています）', { label: 'やめる', fn: () => leave(false) });
+      joinWith(code, { quiet: true, wait: RESUME_WAIT });
+    } else joinWith(code, { wait: RESUME_WAIT, resume: true });
     return;
   }
   if (fromLink) {

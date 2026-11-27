@@ -49,6 +49,22 @@ async function gidOf(pubRaw){
 }
 function validPub(raw){ return raw.length === 65 && raw[0] === 4; }
 
+// 鍵を端末に残す/戻す(ページを開き直しても、同じ部屋・同じ人としてつなぎ直すため)
+async function exportPair(kp){ return { jwk: await subtle.exportKey('jwk', kp.priv) }; }
+async function importPair(s){
+  try{
+    const j = s && s.jwk;
+    if(!j || typeof j !== 'object' || j.kty !== 'EC' || j.crv !== 'P-256' || typeof j.x !== 'string' || typeof j.y !== 'string' || typeof j.d !== 'string') return null;
+    if(!RE_B64.test(j.x) || !RE_B64.test(j.y)) return null;
+    const x = unb64u(j.x), y = unb64u(j.y);
+    if(x.length !== 32 || y.length !== 32) return null;
+    const pub = new Uint8Array(65); pub[0] = 4; pub.set(x, 1); pub.set(y, 33);
+    const priv = await subtle.importKey('jwk', { kty: 'EC', crv: 'P-256', x: j.x, y: j.y, d: j.d, ext: true }, { name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+    return { priv, pub };
+  }catch(e){ return null; }
+}
+const idList = a => (Array.isArray(a) ? a.filter(x => typeof x === 'string' && x.length <= 64) : []);
+
 // 連番ウィンドウ: 同じ番号は2度受け取らない(重複・リプレイ対策)。順番が前後しても受け取る
 class Win{
   constructor(){ this.max = 0; this.seen = new Set(); }
@@ -89,17 +105,20 @@ class Net{
 // ======================================================================
 //  ホスト
 // ======================================================================
-async function host(h){
+// saved: R.persist() で残しておいたもの。渡すと同じ部屋(同じ参加QR)で再開する(参加者は自動でつなぎ直せる)
+async function host(h, saved){
   h = h || {};
-  const kp = await genPair();
-  const roomId = b64u(rnd(16));
+  let kp = null, roomId = null;
+  if(saved && saved.v === 1 && RE_ROOM.test(String(saved.roomId))){ kp = await importPair(saved.key); roomId = kp ? saved.roomId : null; }
+  const resumed = !!kp;
+  if(!kp){ kp = await genPair(); roomId = b64u(rnd(16)); }
   const base = PREFIX + roomId, inbox = base + '/h';
-  const R = { qr: 'MJ1~' + roomId + '~' + b64u(kp.pub), peers: new Map(), locked: false, clock: { offset: 0, rtt: 0, n: 1 }, closed: false };
-  const byGid = new Map(), pending = new Set(), banned = new Set();
+  const R = { qr: 'MJ1~' + roomId + '~' + b64u(kp.pub), peers: new Map(), locked: false, resumed, clock: { offset: 0, rtt: 0, n: 1 }, closed: false };
+  const byGid = new Map(), pending = new Set(), banned = new Set(resumed ? idList(saved.banned) : []);
   // known: いちど入室を認めた参加者の鍵(gid)。切断のあと、同じ鍵なら「受付を締めたあと」でも戻れる
   //        (鍵の持ち主でないと、ホストとの二人専用の暗号を作れないので、なりすませない)
   // usedJn: 入室リクエストの使い捨てID。盗聴した入室リクエストの再送で、切断済みの人を復活させない
-  const known = new Set(), usedJn = new Set();
+  const known = new Set(resumed ? idList(saved.known) : []), usedJn = new Set(resumed ? idList(saved.usedJn) : []);
   let nextId = 1, joinTimes = [];
   const net = new Net(NomiMQTT.BROKERS, { onMessage, onStatus: s => { if(h.onNet) h.onNet(s); } });
   net.subscribe(inbox);
@@ -179,6 +198,10 @@ async function host(h){
   R.bcast = (obj, reliable) => { R.peers.forEach(p => sendTo(p, obj, !!reliable)); };
   R.kick = (id) => { const p = R.peers.get(id); if(!p) return; banned.add(p.gid); sendTo(p, { t: 'kicked' }, true); setTimeout(() => drop(p, 'kicked'), 50); };
   R.setLocked = (v) => { R.locked = !!v; };
+  R.persist = async () => ({
+    v: 1, roomId, key: await exportPair(kp),
+    known: Array.from(known).slice(-64), banned: Array.from(banned).slice(-64), usedJn: Array.from(usedJn).slice(-200)
+  });
   R.close = () => {
     if(R.closed) return;
     R.bcast({ t: 'closed' }, true);
@@ -191,7 +214,8 @@ async function host(h){
 //  参加者
 // ======================================================================
 // identity: 前に使った鍵(G.identity)を渡すと、同じ人として入り直せる(切断からの復帰用)
-async function join(qrText, h, identity){
+// opts.wait: ホストの返事を待つ長さ(ms)。ホストがアプリを開き直すのを待つときは長くする
+async function join(qrText, h, identity, opts){
   h = h || {};
   const p = String(qrText || '').trim().split('~');
   if(p.length !== 3 || p[0] !== 'MJ1' || !RE_ROOM.test(p[1]) || !RE_B64.test(p[2]) || p[2].length > 120) throw new Error('麻雀精算の参加QRじゃないよ');
@@ -235,14 +259,17 @@ async function join(qrText, h, identity){
   }
   G.send = (obj, reliable) => sendRaw('M', obj, !!reliable);
 
-  // 入室リクエストは、返事(welcome)が来るまで繰り返す
-  let tries = 0;
-  const joinT = setInterval(() => {
-    if(G.welcomed || G.closed){ clearInterval(joinT); return; }
-    if(++tries > 30){ clearInterval(joinT); end('timeout'); return; }
+  // 入室リクエストは、返事(welcome)が来るまで繰り返す(はじめの30秒は1.5秒ごと、そのあとは4秒ごと)
+  const t0 = Date.now(), wait = (opts && opts.wait > 0) ? opts.wait : 45000;
+  let joinT = null;
+  function knock(){
+    if(G.welcomed || G.closed) return;
+    const el = Date.now() - t0;
+    if(el > wait){ end('timeout'); return; }
     sendRaw('J', { t: 'join', name: clean(h.name) || 'ゲスト', jn }, false);
-  }, 1500);
-  sendRaw('J', { t: 'join', name: clean(h.name) || 'ゲスト', jn }, false);
+    joinT = setTimeout(knock, el < 30000 ? 1500 : 4000);
+  }
+  knock();
 
   // 時計合わせ(ホストの performance.now() との差を測る。往復が一番短かったものを採用)
   function onPong(o){
@@ -265,17 +292,18 @@ async function join(qrText, h, identity){
 
   function end(why){
     if(G.closed) return;
-    G.closed = true; clearInterval(joinT); clearInterval(hbT); clearInterval(dogT); clearInterval(syncT);
+    G.closed = true; clearTimeout(joinT); clearInterval(hbT); clearInterval(dogT); clearInterval(syncT);
     net.close();
     if(h.onEnd) h.onEnd(why);
   }
   G.close = () => {
     if(G.closed) return;
-    sendRaw('M', { t: 'bye' }, true);
-    setTimeout(() => { G.closed = true; clearInterval(joinT); clearInterval(hbT); clearInterval(dogT); clearInterval(syncT); net.close(); }, 700);
+    if(G.welcomed) sendRaw('M', { t: 'bye' }, true);
+    clearTimeout(joinT);
+    setTimeout(() => { G.closed = true; clearTimeout(joinT); clearInterval(hbT); clearInterval(dogT); clearInterval(syncT); net.close(); }, 700);
   };
   return G;
 }
 
-window.NomiRoom = { host, join, clean, MAX_PLAYERS, _i: { Win, pairKey, seal, unseal, genPair, gidOf, b64u, unb64u, Net } };
+window.NomiRoom = { host, join, clean, exportPair, importPair, MAX_PLAYERS, _i: { Win, pairKey, seal, unseal, genPair, gidOf, b64u, unb64u, Net } };
 })();

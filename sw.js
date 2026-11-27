@@ -1,5 +1,5 @@
 // 更新を配るときは CACHE_VERSION を上げる
-const CACHE_VERSION = 'mj-v12';
+const CACHE_VERSION = 'mj-v13';
 const FILES = [
   './', './index.html', './app.js', './app.css', './ui.js', './logic.js', './sync.js', './room.js', './mqtt.js',
   './online.html', './online.js', './manifest.json', './icon-192.png', './icon-512.png',
